@@ -139,6 +139,12 @@ export async function replaceEntries(entries: VisitorEntry[]): Promise<void> {
   }
 }
 
+export async function importEntries(entries: VisitorEntry[]): Promise<void> {
+  for (const entry of entries) {
+    await saveEntry(entry);
+  }
+}
+
 export const updateHostAction = async (id: string, hostAction: string): Promise<void> => {
   try {
     if (!id) throw new Error("Entry ID is required to update host action.");

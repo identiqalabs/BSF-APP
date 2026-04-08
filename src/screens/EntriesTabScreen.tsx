@@ -7,7 +7,7 @@ import * as DocumentPicker from "expo-document-picker";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
 
-import { getAllEntries, replaceEntries, updateHostAction } from "../utils/database";
+import { getAllEntries, importEntries, replaceEntries, updateHostAction } from "../utils/database";
 import type { VisitorEntry } from "../types/VisitorEntry";
 import { entriesToCsv } from "../utils/csv";
 import { formatDateTime } from "../utils/format";
@@ -38,7 +38,7 @@ function formatDDMMYYYY(d: Date): string {
 function withinRange(entryISO: string, activeFrom: Date | null, activeTo: Date | null): boolean {
   const entryDateStr = toIsoDate(entryISO);
   if (!entryDateStr) return true;
-  
+
   if (activeFrom) {
     if (entryDateStr < toIsoDate(activeFrom)) return false;
   }
@@ -114,8 +114,8 @@ export default function EntriesTabScreen({ navigation }: Props) {
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       res = res.filter((e) => {
-        return (e.dignitaryName?.toLowerCase().includes(q)) || 
-               (e.personToMeet?.toLowerCase().includes(q));
+        return (e.dignitaryName?.toLowerCase().includes(q)) ||
+          (e.personToMeet?.toLowerCase().includes(q));
       });
     }
 
@@ -128,7 +128,7 @@ export default function EntriesTabScreen({ navigation }: Props) {
     // Fallback behavior (per request): show all if filtered is empty, UNLESS we are explicitly searching.
     const filterIsActive = !!(activeFrom || activeTo);
     const searchIsActive = !!searchQuery.trim();
-    
+
     if (searchIsActive) return filtered;
     if (filterIsActive && filtered.length > 0) return filtered;
     return entries;
@@ -212,7 +212,7 @@ export default function EntriesTabScreen({ navigation }: Props) {
         for (let i = 0; i < filtered.length; i++) {
           const e = filtered[i];
 
-          if (y + 70 > 800 || i === 0) {
+          if (y + 100 > 800 || i === 0) {
             if (i > 0) {
               doc.addPage();
               y = 40;
@@ -220,23 +220,25 @@ export default function EntriesTabScreen({ navigation }: Props) {
             doc.setFontSize(11);
             doc.setFont("helvetica", "bold");
             doc.setTextColor(55, 65, 81);
-            doc.text("Photo", 40, y);
-            doc.text("Name", 110, y);
-            doc.text("Remarks", 270, y);
-            doc.text("Date", 460, y);
+            doc.text("तस्वीर / Photo", 40, y);
+            doc.text("नाम / Name", 110, y);
+            doc.text("विचार अभिव्यक्ति / Expression of Thoughts", 270, y);
+            doc.text("दिनांक / Date", 460, y);
 
             doc.setDrawColor(229, 231, 235);
             doc.setLineWidth(1);
             doc.line(40, y + 5, 555, y + 5);
-            y += 15;
+            y += 20;
           }
+
 
           // Row entry
           try {
             if (e.photoUri && e.photoUri.startsWith("data:")) {
               doc.setDrawColor(229, 231, 235);
-              doc.rect(40, y + 5, 55, 55);
-              doc.addImage(e.photoUri, "JPEG", 40, y + 5, 55, 55);
+              doc.rect(40, y + 5, 65, 65);
+              doc.addImage(e.photoUri, "JPEG", 40, y + 5, 65, 65);
+
             }
           } catch { }
 
@@ -249,10 +251,12 @@ export default function EntriesTabScreen({ navigation }: Props) {
               } else if (e.nameUri.startsWith("data:image")) {
                 nameDataUrl = e.nameUri;
               }
-              doc.addImage(nameDataUrl, "PNG", 110, y + 10, 140, 45);
+              doc.addImage(nameDataUrl, "PNG", 110, y + 10, 150, 50);
+
+
             }
           } catch { }
- 
+
           try {
             if (e.remarksUri) {
               let remarksDataUrl = e.remarksUri;
@@ -262,7 +266,9 @@ export default function EntriesTabScreen({ navigation }: Props) {
               } else if (e.remarksUri.startsWith("data:image")) {
                 remarksDataUrl = e.remarksUri;
               }
-              doc.addImage(remarksDataUrl, "PNG", 270, y + 10, 170, 45);
+              doc.addImage(remarksDataUrl, "PNG", 270, y + 5, 180, 90);
+
+
             }
           } catch { }
 
@@ -279,7 +285,9 @@ export default function EntriesTabScreen({ navigation }: Props) {
             doc.text(dt, 460, y + 35);
           }
 
-          y += 70;
+          y += 110;
+
+
 
           doc.setDrawColor(243, 244, 246);
           doc.setLineWidth(1);
@@ -306,11 +314,13 @@ export default function EntriesTabScreen({ navigation }: Props) {
                 h1 { font-size: 20px; margin: 0; color: #111827; }
                 h2 { font-size: 16px; margin: 5px 0 0 0; color: #4B5563; }
                 table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-                th { background-color: #f9fafb; padding: 12px 8px; text-align: center; font-size: 12px; text-transform: uppercase; border-bottom: 1px solid #e5e7eb; }
-                td { padding: 12px 8px; text-align: center; border-bottom: 1px solid #f3f4f6; vertical-align: middle; }
-                .photo { width: 60px; height: 60px; object-fit: cover; border-radius: 8px; border: 1px solid #e5e7eb; }
-                .signature { max-width: 150px; height: 45px; object-fit: contain; }
-                .date-cell { text-align: left; font-size: 11px; white-space: nowrap; }
+                th { background-color: #f9fafb; padding: 12px 8px; text-align: center; font-size: 13px; font-weight: bold; border-bottom: 2px solid #e5e7eb; }
+                td { padding: 15px 8px; text-align: center; border-bottom: 1px solid #f3f4f6; vertical-align: middle; }
+                .photo { width: 90px; height: 90px; object-fit: cover; border-radius: 8px; border: 1px solid #e5e7eb; }
+                .signature-name { max-width: 150px; height: 60px; object-fit: contain; }
+                .signature-remarks { max-width: 350px; height: 120px; object-fit: contain; }
+                .date-cell { text-align: left; font-size: 12px; white-space: nowrap; }
+
               </style>
             </head>
             <body>
@@ -321,48 +331,48 @@ export default function EntriesTabScreen({ navigation }: Props) {
               <table>
                 <thead>
                   <tr>
-                    <th>Photo</th>
-                    <th style="width: 30%">Name</th>
-                    <th style="width: 35%">Remarks</th>
-                    <th style="text-align: left">Date / Time</th>
+                    <th>तस्वीर / Photo</th>
+                    <th style="width: 30%">नाम / Name</th>
+                    <th style="width: 35%">विचार अभिव्यक्ति / Expression of Thoughts</th>
+                    <th style="text-align: left">दिनांक / Date</th>
                   </tr>
                 </thead>
                 <tbody>
                   ${(await Promise.all(filtered.map(async e => {
-                    let photoHtml = '<div style="width:60px;height:60px;background:#f3f4f6;border-radius:8px;"></div>';
-                    if (e.photoUri) {
-                      let base64 = '';
-                      if (e.photoUri.startsWith('data:image')) {
-                        base64 = e.photoUri.split(',')[1];
-                      } else if (e.photoUri.startsWith("file://")) {
-                        base64 = await FileSystem.readAsStringAsync(e.photoUri, { encoding: (FileSystem as any).EncodingType?.Base64 });
-                      }
-                      photoHtml = `<img src="data:image/jpeg;base64,${base64}" class="photo" />`;
-                    }
+          let photoHtml = '<div style="width:90px;height:90px;background:#f3f4f6;border-radius:8px;"></div>';
+          if (e.photoUri) {
+            let base64 = '';
+            if (e.photoUri.startsWith('data:image')) {
+              base64 = e.photoUri.split(',')[1];
+            } else if (e.photoUri.startsWith("file://")) {
+              base64 = await FileSystem.readAsStringAsync(e.photoUri, { encoding: (FileSystem as any).EncodingType?.Base64 });
+            }
+            photoHtml = `<img src="data:image/jpeg;base64,${base64}" class="photo" />`;
+          }
 
-                    let nameImg = '-';
-                    if (e.nameUri) {
-                      let base64 = '';
-                      if (e.nameUri.startsWith('data:image')) {
-                        base64 = e.nameUri.split(',')[1];
-                      } else if (e.nameUri.startsWith("file://")) {
-                        base64 = await FileSystem.readAsStringAsync(e.nameUri, { encoding: (FileSystem as any).EncodingType?.Base64 });
-                      }
-                      nameImg = `<img src="data:image/png;base64,${base64}" class="signature" />`;
-                    }
+          let nameImg = '-';
+          if (e.nameUri) {
+            let base64 = '';
+            if (e.nameUri.startsWith('data:image')) {
+              base64 = e.nameUri.split(',')[1];
+            } else if (e.nameUri.startsWith("file://")) {
+              base64 = await FileSystem.readAsStringAsync(e.nameUri, { encoding: (FileSystem as any).EncodingType?.Base64 });
+            }
+            nameImg = `<img src="data:image/png;base64,${base64}" class="signature-name" />`;
+          }
 
-                    let remarksImg = '-';
-                    if (e.remarksUri) {
-                      let base64 = '';
-                      if (e.remarksUri.startsWith('data:image')) {
-                        base64 = e.remarksUri.split(',')[1];
-                      } else if (e.remarksUri.startsWith("file://")) {
-                        base64 = await FileSystem.readAsStringAsync(e.remarksUri, { encoding: (FileSystem as any).EncodingType?.Base64 });
-                      }
-                      remarksImg = `<img src="data:image/png;base64,${base64}" class="signature" />`;
-                    }
+          let remarksImg = '-';
+          if (e.remarksUri) {
+            let base64 = '';
+            if (e.remarksUri.startsWith('data:image')) {
+              base64 = e.remarksUri.split(',')[1];
+            } else if (e.remarksUri.startsWith("file://")) {
+              base64 = await FileSystem.readAsStringAsync(e.remarksUri, { encoding: (FileSystem as any).EncodingType?.Base64 });
+            }
+            remarksImg = `<img src="data:image/png;base64,${base64}" class="signature-remarks" />`;
+          }
 
-                    return `
+          return `
                     <tr>
                       <td>${photoHtml}</td>
                       <td>${nameImg}</td>
@@ -370,12 +380,13 @@ export default function EntriesTabScreen({ navigation }: Props) {
                       <td class="date-cell">${formatDateTime(e.dateTimeISO).replace(', ', '<br/>')}</td>
                     </tr>
                     `;
-                  }))).join('')}
+        }))).join('')}
                 </tbody>
               </table>
             </body>
           </html>
         `;
+
 
         console.log("PDF Export: Executing printAsync");
         await Print.printAsync({ html });
@@ -476,11 +487,11 @@ export default function EntriesTabScreen({ navigation }: Props) {
         const asset = result.assets[i];
         // Processing page X of Y...
         console.log(`Processing page ${i + 1} of ${result.assets.length}...`);
-        
+
         try {
           const { entries, debugInfo } = await extractEntriesFromImage(asset.uri);
           totalDebugInfo += debugInfo + "\n\n";
-          
+
           if (entries.length === 0) {
             console.log(`No entries extracted from image ${i + 1}`);
           }
@@ -494,8 +505,8 @@ export default function EntriesTabScreen({ navigation }: Props) {
         Alert.alert("Error", "No data could be read from any image.");
         return;
       }
-      
-      navigation.navigate("ImportPreview", { 
+
+      navigation.navigate("ImportPreview", {
         extractedEntries: allExtracted,
         debugInfo: totalDebugInfo
       });
@@ -519,11 +530,32 @@ export default function EntriesTabScreen({ navigation }: Props) {
       const raw = await FileSystem.readAsStringAsync(res.assets[0].uri);
       const parsed: unknown = JSON.parse(raw);
       if (!Array.isArray(parsed)) throw new Error("Invalid shape");
-      await replaceEntries(parsed as VisitorEntry[]);
-      await reload();
+
+      const entriesToImport = parsed as VisitorEntry[];
+
+      Alert.alert(
+        "Confirm Restore",
+        `This will merge ${entriesToImport.length} records into your current library. Existing entries with the same ID will be updated. Continue?`,
+        [
+          { text: "Cancel", style: "cancel", onPress: () => setBusyJson(false) },
+          { 
+            text: "Merge Data", 
+            onPress: async () => {
+              try {
+                await importEntries(entriesToImport);
+                await reload();
+                Alert.alert("Success", `Successfully merged ${entriesToImport.length} records.`);
+              } catch (err) {
+                Alert.alert("Restore failed", "An error occurred while merging data.");
+              } finally {
+                setBusyJson(false);
+              }
+            } 
+          },
+        ]
+      );
     } catch {
       Alert.alert("Restore failed", "Please select a valid backup JSON file.");
-    } finally {
       setBusyJson(false);
     }
   }
@@ -697,108 +729,117 @@ export default function EntriesTabScreen({ navigation }: Props) {
           <FlatList
             data={paginatedData}
             keyExtractor={(item) => item.id}
-          style={{ width: "100%" }}
-          ListHeaderComponent={
-            <View style={styles.tableHeader}>
-              <View style={styles.colPhoto}>
-                <Text style={styles.th}>Photo</Text>
+            style={{ width: "100%" }}
+            ListHeaderComponent={
+              <View style={styles.tableHeader}>
+                <View style={styles.colPhoto}>
+                  <Text style={styles.th}>तस्वीर / Photo</Text>
+                </View>
+                <View style={styles.colName}>
+                  <Text style={styles.th}>नाम / Name</Text>
+                </View>
+                <View style={styles.colRemarks}>
+                  <Text style={styles.th}>विचार अभिव्यक्ति / Expression of Thoughts</Text>
+                </View>
+                <View style={styles.colDate}>
+                  <Text style={styles.th}>दिनांक / Date</Text>
+                </View>
+
+
               </View>
-              <View style={styles.colName}>
-                <Text style={styles.th}>Name</Text>
+            }
+            ListEmptyComponent={
+              <View style={styles.empty}>
+                <Text style={styles.emptyText}>No visitor records found.</Text>
               </View>
-              <View style={styles.colRemarks}>
-                <Text style={styles.th}>Remarks</Text>
-              </View>
-              <View style={styles.colDate}>
-                <Text style={styles.th}>Date</Text>
-              </View>
+            }
+            contentContainerStyle={styles.tableBody}
+            renderItem={({ item }) => (
+              <Pressable
+                onPress={() => {
+                  const parent = navigation.getParent?.();
+                  if (parent?.navigate) parent.navigate("EntryDetail", { entryId: item.id });
+                  else navigation.navigate?.("EntryDetail", { entryId: item.id });
+                }}
+                style={styles.tableRow}
+              >
+                <View style={styles.colPhoto}>
+                  <Image source={{ uri: item.photoUri }} style={styles.photoThumb} resizeMode="cover" />
+                  {item.hostAction && (
+                    <View style={styles.hostActionBadge} />
+                  )}
+                </View>
+                <View style={styles.colName}>
+                  {item.isImported ? (
+                    <Text style={styles.importedText}>{item.personToMeet}</Text>
+                  ) : (
+                    <View style={styles.nameCellContent}>
+                      {!!item.dignitaryName && (
+                        <Text style={styles.dignitaryNameText} numberOfLines={2}>
+                          {item.dignitaryName}
+                        </Text>
+                      )}
+                      <Image
+                        source={{ uri: item.nameUri }}
+                        style={styles.nameThumb}
+                        resizeMode="contain"
+                      />
+                    </View>
+                  )}
+                </View>
+                <View style={styles.colRemarks}>
+                  {item.isImported ? (
+                    <Text style={styles.importedText} numberOfLines={2}>{item.remarksUri}</Text>
+                  ) : (
+                    <Image
+                      source={{ uri: item.remarksUri }}
+                      style={styles.remarksThumb}
+                      resizeMode="contain"
+                    />
+                  )}
+                </View>
+                <View style={styles.colDate}>
+                  <Text style={styles.dateText}>{item.isImported ? item.dateTimeISO : formatDateTime(item.dateTimeISO)}</Text>
+
+                  <TouchableOpacity
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      openActionModal(item.id, item.hostAction);
+                    }}
+                    style={styles.addActionBtn}
+                  >
+                    <Text style={styles.addActionBtnText}>{item.hostAction ? "Edit" : "+ Action"}</Text>
+                  </TouchableOpacity>
+                </View>
+              </Pressable>
+            )}
+          />
+
+          {displayData.length > 0 && (
+            <View style={styles.paginationRow}>
+              <TouchableOpacity
+                disabled={currentPage === 1}
+                onPress={() => setCurrentPage(p => p - 1)}
+                style={[styles.pageBtn, currentPage === 1 && styles.pageBtnDisabled]}
+              >
+                <Text style={styles.pageBtnText}>Previous</Text>
+              </TouchableOpacity>
+
+              <Text style={styles.pageIndicator}>
+                Page {currentPage} of {Math.max(1, totalPages)}
+              </Text>
+
+              <TouchableOpacity
+                disabled={currentPage === totalPages || totalPages === 0}
+                onPress={() => setCurrentPage(p => p + 1)}
+                style={[styles.pageBtn, (currentPage === totalPages || totalPages === 0) && styles.pageBtnDisabled]}
+              >
+                <Text style={styles.pageBtnText}>Next</Text>
+              </TouchableOpacity>
             </View>
-          }
-          ListEmptyComponent={
-            <View style={styles.empty}>
-              <Text style={styles.emptyText}>No visitor records found.</Text>
-            </View>
-          }
-          contentContainerStyle={styles.tableBody}
-          renderItem={({ item }) => (
-            <Pressable
-              onPress={() => {
-                const parent = navigation.getParent?.();
-                if (parent?.navigate) parent.navigate("EntryDetail", { entryId: item.id });
-                else navigation.navigate?.("EntryDetail", { entryId: item.id });
-              }}
-              style={styles.tableRow}
-            >
-              <View style={styles.colPhoto}>
-                <Image source={{ uri: item.photoUri }} style={styles.photoThumb} resizeMode="cover" />
-                {item.hostAction && (
-                  <View style={styles.hostActionBadge} />
-                )}
-              </View>
-              <View style={styles.colName}>
-                {item.isImported ? (
-                  <Text style={styles.importedText}>{item.personToMeet}</Text>
-                ) : (
-                  <Image
-                    source={{ uri: item.nameUri }}
-                    style={styles.nameThumb}
-                    resizeMode="contain"
-                  />
-                )}
-              </View>
-              <View style={styles.colRemarks}>
-                {item.isImported ? (
-                  <Text style={styles.importedText} numberOfLines={2}>{item.remarksUri}</Text>
-                ) : (
-                  <Image
-                    source={{ uri: item.remarksUri }}
-                    style={styles.remarksThumb}
-                    resizeMode="contain"
-                  />
-                )}
-              </View>
-              <View style={styles.colDate}>
-                <Text style={styles.dateText}>{item.isImported ? item.dateTimeISO : formatDateTime(item.dateTimeISO)}</Text>
-                
-                <TouchableOpacity 
-                  onPress={(e) => {
-                    e.stopPropagation();
-                    openActionModal(item.id, item.hostAction);
-                  }}
-                  style={styles.addActionBtn}
-                >
-                  <Text style={styles.addActionBtnText}>{item.hostAction ? "Edit" : "+ Action"}</Text>
-                </TouchableOpacity>
-              </View>
-            </Pressable>
           )}
-        />
-
-        {displayData.length > 0 && (
-          <View style={styles.paginationRow}>
-            <TouchableOpacity 
-              disabled={currentPage === 1} 
-              onPress={() => setCurrentPage(p => p - 1)}
-              style={[styles.pageBtn, currentPage === 1 && styles.pageBtnDisabled]}
-            >
-              <Text style={styles.pageBtnText}>Previous</Text>
-            </TouchableOpacity>
-            
-            <Text style={styles.pageIndicator}>
-              Page {currentPage} of {Math.max(1, totalPages)}
-            </Text>
-
-            <TouchableOpacity 
-              disabled={currentPage === totalPages || totalPages === 0} 
-              onPress={() => setCurrentPage(p => p + 1)}
-              style={[styles.pageBtn, (currentPage === totalPages || totalPages === 0) && styles.pageBtnDisabled]}
-            >
-              <Text style={styles.pageBtnText}>Next</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-      </>
-    )}
+        </>
+      )}
 
       {showFromPicker && (
         <DateTimePicker
@@ -907,8 +948,8 @@ const styles = StyleSheet.create({
 
   tableRow: { width: "100%", flexDirection: "row", paddingHorizontal: 0, alignItems: "center", backgroundColor: "white", borderRadius: 16, borderWidth: 1, borderColor: "#E5E7EB", paddingVertical: 12, alignSelf: "stretch", justifyContent: "space-between" },
   photoThumb: { width: 80, height: 80, borderRadius: 14, borderWidth: 1, borderColor: "#E5E7EB" },
-  nameThumb: { width: 220, height: 60, borderRadius: 12, borderWidth: 1, borderColor: "#E5E7EB", backgroundColor: "#F9FAFB" },
-  remarksThumb: { width: 300, height: 60, borderRadius: 12, borderWidth: 1, borderColor: "#E5E7EB", backgroundColor: "#F9FAFB" },
+  nameThumb: { width: 220, height: 110, borderRadius: 12, borderWidth: 1, borderColor: "#E5E7EB", backgroundColor: "#F9FAFB" },
+  remarksThumb: { width: 350, height: 110, borderRadius: 12, borderWidth: 1, borderColor: "#E5E7EB", backgroundColor: "#F9FAFB" },
   dateText: { fontWeight: "900", color: "#374151", fontSize: 14 },
   importedText: { fontSize: 12, fontWeight: "700", color: "#1F2937", textAlign: "center" },
 
@@ -1002,5 +1043,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: "white"
   },
+  nameCellContent: { flexDirection: "row", alignItems: "center", gap: 10, justifyContent: "flex-start", flex: 1, paddingHorizontal: 10 },
+  dignitaryNameText: { fontSize: 13, color: "#111827", fontWeight: "700", flex: 0.6, textAlign: "left" },
 });
 

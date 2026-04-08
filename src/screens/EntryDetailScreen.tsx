@@ -8,6 +8,21 @@ import { formatDateTime } from "../utils/format";
 
 type Props = NativeStackScreenProps<RootStackParamList, "EntryDetail">;
 
+const AutoHeightImage = ({ source }: { source: { uri: string } }) => {
+  const [aspectRatio, setAspectRatio] = useState(1);
+  return (
+    <Image
+      source={source}
+      style={{ width: "100%", aspectRatio, backgroundColor: "white" }}
+      resizeMode="contain"
+      onLoad={(e) => {
+        const { width, height } = e.nativeEvent.source;
+        if (width && height) setAspectRatio(width / height);
+      }}
+    />
+  );
+};
+
 export default function EntryDetailScreen({ route }: Props) {
   const { width } = useWindowDimensions();
   const isTablet = width > 768;
@@ -98,31 +113,34 @@ export default function EntryDetailScreen({ route }: Props) {
           </View>
         ) : null}
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{entry.isImported ? "Visitor Name & Address" : "Name (Handwritten)"}</Text>
+        <View style={styles.sectionNoPadding}>
+          <Text style={[styles.sectionTitle, { paddingHorizontal: 16, paddingTop: 16 }]}>
+            {entry.isImported ? "Visitor Name & Address" : "Name"}
+          </Text>
           {entry.isImported ? (
-            <Text style={styles.importedText}>{entry.personToMeet}</Text>
+            <Text style={[styles.importedText, { paddingHorizontal: 16, paddingBottom: 16 }]}>{entry.personToMeet}</Text>
           ) : (
-            <Image source={{ uri: entry.nameUri }} style={[styles.handwriting, isTablet && { height: 220 }]} resizeMode="contain" />
-          )}
-        </View>
-  
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{entry.isImported ? "Remarks" : "Remarks (Handwritten)"}</Text>
-          {entry.isImported ? (
-            <Text style={styles.importedText}>{entry.remarksUri}</Text>
-          ) : (
-            <Image source={{ uri: entry.remarksUri }} style={[styles.handwriting, isTablet && { height: 220 }]} resizeMode="contain" />
+            <AutoHeightImage source={{ uri: entry.nameUri }} />
           )}
         </View>
 
-        <TouchableOpacity 
+        <View style={styles.sectionNoPadding}>
+          <Text style={[styles.sectionTitle, { paddingHorizontal: 16, paddingTop: 16 }]}>{entry.isImported ? "Remarks" : "Remarks"}</Text>
+          {entry.isImported ? (
+            <Text style={[styles.importedText, { paddingHorizontal: 16, paddingBottom: 16 }]}>{entry.remarksUri}</Text>
+          ) : (
+            <AutoHeightImage source={{ uri: entry.remarksUri }} />
+          )}
+        </View>
+
+
+        <TouchableOpacity
           style={styles.hostActionBtn}
           onPress={() => setIsModalVisible(true)}
         >
           <Text style={styles.hostActionBtnText}>{entry.hostAction ? "Update Host Action" : "Add Host Action"}</Text>
         </TouchableOpacity>
-        
+
         <View style={{ height: 40 }} />
       </ScrollView>
 
@@ -167,10 +185,13 @@ const styles = StyleSheet.create({
   date: { fontWeight: "800", color: "#374151", fontSize: 16 },
 
   section: { borderWidth: 1, borderColor: "#E5E7EB", borderRadius: 16, padding: 16, gap: 10, backgroundColor: "#F9FAFB" },
+  sectionNoPadding: { borderWidth: 1, borderColor: "#E5E7EB", borderRadius: 16, gap: 10, backgroundColor: "#F9FAFB", overflow: "hidden" },
   sectionTitle: { fontWeight: "900", color: "#111827", fontSize: 16 },
   photo: { width: "100%", height: 320, borderRadius: 12, borderWidth: 1, borderColor: "#E5E7EB", backgroundColor: "#F9FAFB" },
-  handwriting: { width: "100%", height: 160, borderRadius: 12, borderWidth: 1, borderColor: "#E5E7EB", backgroundColor: "white" },
+  handwriting: { width: "100%", height: 120, borderRadius: 12, borderWidth: 1, borderColor: "#E5E7EB", backgroundColor: "white" },
+  remarksPreview: { width: "100%", height: 800, borderRadius: 12, borderWidth: 0, backgroundColor: "white" },
   importedText: { fontSize: 18, color: "#111827", fontWeight: "700" },
+
 
   hostActionBtn: {
     backgroundColor: "#0B1220",
