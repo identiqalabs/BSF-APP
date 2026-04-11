@@ -9,7 +9,6 @@ import * as Sharing from "expo-sharing";
 
 import { getAllEntries, importEntries, replaceEntries, updateHostAction } from "../utils/database";
 import type { VisitorEntry } from "../types/VisitorEntry";
-import { entriesToCsv } from "../utils/csv";
 import { formatDateTime } from "../utils/format";
 import { loadLastBackup, setLastBackup } from "../storage/lastBackup";
 import * as ImagePicker from "expo-image-picker";
@@ -48,7 +47,7 @@ function withinRange(entryISO: string, activeFrom: Date | null, activeTo: Date |
   return true;
 }
 
-export default function EntriesTabScreen({ navigation }: Props) {
+function DashboardContent({ navigation, isLegacyPopup, setViewingLegacy }: Props & { isLegacyPopup?: boolean, setViewingLegacy: (val: boolean) => void }) {
   const { width } = useWindowDimensions();
   const isTablet = width > 768;
   const [entries, setEntries] = useState<VisitorEntry[]>([]);
@@ -102,7 +101,10 @@ export default function EntriesTabScreen({ navigation }: Props) {
   }, [searchQuery, activeFrom, activeTo]);
 
   const filtered = useMemo(() => {
-    let res = entries;
+    let res = entries.filter((e) => {
+      const isLegacy = !e.isImported && !e.nameUri;
+      return isLegacyPopup ? isLegacy : !isLegacy;
+    });
 
     if (activeFrom || activeTo) {
       res = res.filter((e) => {
@@ -121,7 +123,7 @@ export default function EntriesTabScreen({ navigation }: Props) {
 
     console.log(`Filter: Active, Results: ${res.length} (Total entries: ${entries.length})`);
     return res;
-  }, [entries, activeFrom, activeTo, searchQuery]);
+  }, [entries, activeFrom, activeTo, searchQuery, isLegacyPopup]);
 
   const displayData = useMemo(() => {
     // Standard behavior: show filtered even if empty.
@@ -131,7 +133,7 @@ export default function EntriesTabScreen({ navigation }: Props) {
 
     if (searchIsActive) return filtered;
     if (filterIsActive && filtered.length > 0) return filtered;
-    return entries;
+    return filtered;
   }, [entries, filtered, activeFrom, activeTo, searchQuery]);
 
   const totalPages = Math.ceil(displayData.length / ITEMS_PER_PAGE);
@@ -139,51 +141,6 @@ export default function EntriesTabScreen({ navigation }: Props) {
     const start = (currentPage - 1) * ITEMS_PER_PAGE;
     return displayData.slice(start, start + ITEMS_PER_PAGE);
   }, [displayData, currentPage]);
-
-  async function handleDownloadExcel() {
-    console.log("Excel Export: Function triggered");
-    if (exporting) return;
-
-    if (entries.length === 0) {
-      Alert.alert("No data", "There are no visitor records to export.");
-      return;
-    }
-
-    setExporting(true);
-    try {
-      const csv = entriesToCsv(filtered);
-      const fileName = `visitor-entries-${Date.now()}.csv`;
-
-      if (Platform.OS === "web") {
-        const fs = FileSystem as any;
-        const fileUri = `${fs.cacheDirectory || fs.documentDirectory}${fileName}`;
-        await FileSystem.writeAsStringAsync(fileUri, csv, { encoding: "utf8" });
-        Alert.alert("Web Export", "Excel download is handled by the browser.");
-      } else {
-        // Native platforms (Android/iOS)
-        const fileUri = `${FileSystem.cacheDirectory}${fileName}`;
-        console.log("Excel Export: Writing to", fileUri);
-
-        await FileSystem.writeAsStringAsync(fileUri, csv, { encoding: "utf8" });
-
-        if (await Sharing.isAvailableAsync()) {
-          console.log("Excel Export: Opening share dialog");
-          await Sharing.shareAsync(fileUri);
-          Alert.alert("Success", "Excel CSV generated and opened for sharing.");
-        } else {
-          Alert.alert("Error", "Sharing is not available on this device.");
-        }
-      }
-    } catch (err: any) {
-      console.error("Excel Export Error:", err);
-      Alert.alert(
-        "Download failed",
-        `Could not export CSV file.\n\nError: ${err.message || "Unknown error"}`
-      );
-    } finally {
-      setExporting(false);
-    }
-  }
 
   async function handleExportPdf() {
     if (filtered.length === 0) {
@@ -222,7 +179,7 @@ export default function EntriesTabScreen({ navigation }: Props) {
             doc.setTextColor(55, 65, 81);
             doc.text("तस्वीर / Photo", 40, y);
             doc.text("नाम / Name", 110, y);
-            doc.text("विचार अभिव्यक्ति / Expression of Thoughts", 270, y);
+            doc.text("विचार / Thoughts", 270, y);
             doc.text("दिनांक / Date", 460, y);
 
             doc.setDrawColor(229, 231, 235);
@@ -333,7 +290,7 @@ export default function EntriesTabScreen({ navigation }: Props) {
                   <tr>
                     <th>तस्वीर / Photo</th>
                     <th style="width: 30%">नाम / Name</th>
-                    <th style="width: 35%">विचार अभिव्यक्ति / Expression of Thoughts</th>
+                    <th style="width: 35%">विचार /Thoughts</th>
                     <th style="text-align: left">दिनांक / Date</th>
                   </tr>
                 </thead>
@@ -538,8 +495,8 @@ export default function EntriesTabScreen({ navigation }: Props) {
         `This will merge ${entriesToImport.length} records into your current library. Existing entries with the same ID will be updated. Continue?`,
         [
           { text: "Cancel", style: "cancel", onPress: () => setBusyJson(false) },
-          { 
-            text: "Merge Data", 
+          {
+            text: "Merge Data",
             onPress: async () => {
               try {
                 await importEntries(entriesToImport);
@@ -550,7 +507,7 @@ export default function EntriesTabScreen({ navigation }: Props) {
               } finally {
                 setBusyJson(false);
               }
-            } 
+            }
           },
         ]
       );
@@ -601,22 +558,35 @@ export default function EntriesTabScreen({ navigation }: Props) {
         <Image source={require("../../assets/bsflogo.png")} style={styles.logo} resizeMode="contain" />
         <View style={{ flex: 1 }}>
           <Text style={styles.brandTitle}>ASHWINI OFFICERS' MESS</Text>
-          <Text style={styles.brandSubtitle}>Visitor Entries</Text>
+          <Text style={[styles.brandSubtitle, { textAlign: "center", width: "100%" }]}>
+            {isLegacyPopup ? "Legacy Records Dashboard" : "Visitor Book"}
+          </Text>
         </View>
 
-        <TouchableOpacity
-          onPress={() => navigation.navigate("NewEntryModal")}
-          style={styles.createBtn}
-        >
-          <Text style={styles.createBtnText}>Create</Text>
-        </TouchableOpacity>
+        {isLegacyPopup && (
+          <TouchableOpacity
+            onPress={() => setViewingLegacy(false)}
+            style={[styles.createBtn, { backgroundColor: "#6B7280", marginRight: 10 }]}
+          >
+            <Text style={styles.createBtnText}>Close</Text>
+          </TouchableOpacity>
+        )}
+
+        {!isLegacyPopup && (
+          <TouchableOpacity
+            onPress={() => navigation.navigate("NewEntryModal")}
+            style={styles.createBtn}
+          >
+            <Text style={styles.createBtnText}>Create</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       <View style={styles.filtersArea}>
         <View style={styles.searchRow}>
           <TextInput
             style={styles.searchInput}
-            placeholder="Search entries... (Name, Position etc.)"
+            placeholder="Search entries... (Name, Designation etc.)"
             placeholderTextColor="#9CA3AF"
             value={searchQuery}
             onChangeText={setSearchQuery}
@@ -677,14 +647,6 @@ export default function EntriesTabScreen({ navigation }: Props) {
 
         <View style={styles.actionsRow}>
           <TouchableOpacity
-            onPress={handleDownloadExcel}
-            disabled={exporting}
-            style={[styles.actionBtn, styles.greenBtn, exporting && { opacity: 0.5 }]}
-          >
-            {exporting ? <ActivityIndicator color="white" /> : <Text style={styles.actionBtnText}>Download Excel</Text>}
-          </TouchableOpacity>
-
-          <TouchableOpacity
             onPress={handleExportPdf}
             disabled={filtered.length === 0}
             style={[styles.actionBtn, styles.redBtn]}
@@ -709,11 +671,11 @@ export default function EntriesTabScreen({ navigation }: Props) {
           </TouchableOpacity>
 
           <TouchableOpacity
-            onPress={handleUploadPhysical}
+            onPress={() => isLegacyPopup ? navigation.navigate('LegacyEntry') : setViewingLegacy(true)}
             disabled={processingPhysical}
             style={[styles.actionBtn, { backgroundColor: "#0B1220" }, processingPhysical && { opacity: 0.5 }]}
           >
-            {processingPhysical ? <ActivityIndicator color="white" /> : <Text style={styles.actionBtnText}>Upload Physical Records</Text>}
+            {processingPhysical ? <ActivityIndicator color="white" /> : <Text style={styles.actionBtnText}>{isLegacyPopup ? "Upload Legacy Records" : "Legacy Records"}</Text>}
           </TouchableOpacity>
         </View>
 
@@ -739,7 +701,7 @@ export default function EntriesTabScreen({ navigation }: Props) {
                   <Text style={styles.th}>नाम / Name</Text>
                 </View>
                 <View style={styles.colRemarks}>
-                  <Text style={styles.th}>विचार अभिव्यक्ति / Expression of Thoughts</Text>
+                  <Text style={styles.th}>विचार / Thoughts</Text>
                 </View>
                 <View style={styles.colDate}>
                   <Text style={styles.th}>दिनांक / Date</Text>
@@ -905,7 +867,7 @@ const styles = StyleSheet.create({
   brandHeader: { flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingTop: 12, paddingBottom: 8, gap: 12 },
   logo: { width: 64, height: 64, borderRadius: 10, backgroundColor: "transparent" },
   brandTitle: { fontSize: 18, fontWeight: "900", color: "#111827" },
-  brandSubtitle: { fontSize: 16, fontWeight: "800", color: "#374151", marginTop: 3 },
+  brandSubtitle: { fontSize: 16, fontWeight: "800", color: "#374151", marginTop: 3, textAlign: "center" },
 
   filtersArea: { paddingHorizontal: 14, paddingBottom: 10 },
   searchRow: { marginBottom: 12 },
@@ -1046,4 +1008,25 @@ const styles = StyleSheet.create({
   nameCellContent: { flexDirection: "row", alignItems: "center", gap: 10, justifyContent: "flex-start", flex: 1, paddingHorizontal: 10 },
   dignitaryNameText: { fontSize: 13, color: "#111827", fontWeight: "700", flex: 0.6, textAlign: "left" },
 });
+
+export default function EntriesTabScreen({ navigation }: Props) {
+  const [viewingLegacy, setViewingLegacy] = useState(false);
+
+  return (
+    <View style={{ flex: 1 }}>
+      <DashboardContent
+        navigation={navigation}
+        isLegacyPopup={false}
+        setViewingLegacy={setViewingLegacy}
+      />
+      <Modal visible={viewingLegacy} animationType="slide" onRequestClose={() => setViewingLegacy(false)}>
+        <DashboardContent
+          navigation={navigation}
+          isLegacyPopup={true}
+          setViewingLegacy={setViewingLegacy}
+        />
+      </Modal>
+    </View>
+  );
+}
 

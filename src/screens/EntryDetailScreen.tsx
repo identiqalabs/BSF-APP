@@ -113,6 +113,7 @@ export default function EntryDetailScreen({ route }: Props) {
           </View>
         ) : null}
 
+        {(entry.isImported || !!entry.nameUri) && (
         <View style={styles.sectionNoPadding}>
           <Text style={[styles.sectionTitle, { paddingHorizontal: 16, paddingTop: 16 }]}>
             {entry.isImported ? "Visitor Name & Address" : "Name"}
@@ -123,6 +124,7 @@ export default function EntryDetailScreen({ route }: Props) {
             <AutoHeightImage source={{ uri: entry.nameUri }} />
           )}
         </View>
+        )}
 
         <View style={styles.sectionNoPadding}>
           <Text style={[styles.sectionTitle, { paddingHorizontal: 16, paddingTop: 16 }]}>{entry.isImported ? "Remarks" : "Remarks"}</Text>

@@ -87,9 +87,8 @@ export default function NewEntryModalScreen({ navigation }: Props) {
 
   const displayDateTime = useMemo(() => formatDateTime(dateTimeISO), [dateTimeISO]);
 
-  const canSubmit = useMemo(() => {
-    return Boolean(photoUri);
-  }, [photoUri]);
+  // Photo is optional; always allow submission (except when already submitting)
+  const canSubmit = true;
 
   const cameraRef = useRef<CameraView | null>(null);
 
@@ -205,6 +204,13 @@ export default function NewEntryModalScreen({ navigation }: Props) {
     Alert.alert("Upload Image", "Choose a source", options);
   };
 
+  // Helper to upload a photo and store it as a base64 data URL
+  const uploadPhoto = async () => {
+    await pickImage((b64) => {
+      if (b64) setPhotoUri(`data:image/jpeg;base64,${b64}`);
+    });
+  };
+
   const captureFromCamera = async (onPicked: (b64: string) => void) => {
     try {
       const result = await ImagePicker.launchCameraAsync({
@@ -305,7 +311,7 @@ export default function NewEntryModalScreen({ navigation }: Props) {
   }
 
   async function handleSubmit() {
-    if (!canSubmit || isSubmitting) return;
+    if (isSubmitting) return;
     setIsSubmitting(true);
     console.log("Starting entry submission (Local Storage / Base64 Only)...");
 
@@ -327,7 +333,7 @@ export default function NewEntryModalScreen({ navigation }: Props) {
       }
 
       if (!nameBase64Png) {
-        Alert.alert("Name required", "Please write the visitor name using Pen or upload an image.");
+        Alert.alert("Name Canvas Required", "Please write the visitor name using Pen or upload an image.");
         setIsSubmitting(false);
         return;
       }
@@ -373,6 +379,14 @@ export default function NewEntryModalScreen({ navigation }: Props) {
     setRemarksModalVisible(false);
   };
 
+  const handleOpenRemarks = () => {
+    if (!dignitaryName.trim()) {
+      Alert.alert("Name Required", "Please enter the Dignitary Name & Designation before adding thoughts.");
+      return;
+    }
+    setRemarksModalVisible(true);
+  };
+
   return (
     <View style={styles.screen}>
       <View style={styles.topBar}>
@@ -394,21 +408,6 @@ export default function NewEntryModalScreen({ navigation }: Props) {
           <View style={styles.columns}>
             <View style={styles.leftCol}>
               <Text style={styles.sectionTitle}>तस्वीर खींचे / Capture Photo</Text>
-
-              <View style={styles.photoControls}>
-                <TouchableActionButton
-                  label="तस्वीर लो / Take Photo"
-                  onPress={takePhoto}
-                  disabled={!isCameraOpen}
-                  variant="blue"
-                />
-                <TouchableActionButton
-                  label="पुनः लेना / Retake"
-                  onPress={handleRetake}
-                  disabled={!photoUri}
-                  variant="red"
-                />
-              </View>
 
               <View style={styles.photoPreviewBox}>
                 {photoUri ? (
@@ -447,13 +446,27 @@ export default function NewEntryModalScreen({ navigation }: Props) {
                 )}
               </View>
 
-              <TouchableOpacity
-                disabled={!canSubmit || isSubmitting}
-                onPress={handleSubmit}
-                style={[styles.submitBtn, (!canSubmit || isSubmitting) && styles.submitBtnDisabled]}
-              >
-                {isSubmitting ? <ActivityIndicator color="white" /> : <Text style={styles.submitBtnText}>जमा करें / Submit</Text>}
-              </TouchableOpacity>
+              <View style={styles.photoControls}>
+                <TouchableActionButton
+                  label="तस्वीर लो / Take Photo"
+                  onPress={takePhoto}
+                  disabled={!isCameraOpen}
+                  variant="green"
+                />
+                <TouchableActionButton
+                  label="पुनः लेना / Retake"
+                  onPress={handleRetake}
+                  disabled={!photoUri}
+                  variant="red"
+                />
+                <TouchableActionButton
+                  label="अपलोड फोटो / Upload Photo"
+                  onPress={uploadPhoto}
+                  disabled={false}
+                  variant="gray"
+                />
+              </View>
+
             </View>
 
             <View style={styles.rightCol}>
@@ -466,7 +479,7 @@ export default function NewEntryModalScreen({ navigation }: Props) {
                     <TextInput value={displayDateTime} editable={false} style={[styles.input, styles.readOnly]} />
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.sectionLabel}>Dignitary Name &amp; Position</Text>
+                    <Text style={styles.sectionLabel}>Dignitary Name &amp; Designation <Text style={{color: "red"}}>*</Text></Text>
                     <TextInput
                       value={dignitaryName}
                       onChangeText={setDignitaryName}
@@ -495,9 +508,9 @@ export default function NewEntryModalScreen({ navigation }: Props) {
                   onUpload={() => pickImage(setUploadedNameBase64)}
                 />
                 {uploadedNameBase64 ? (
-                  <AutoHeightImage 
-                    source={{ uri: `data:image/png;base64,${uploadedNameBase64}` }} 
-                    containerStyle={[styles.photoPreviewBox, { marginBottom: 10, padding: 0, overflow: 'hidden' }]} 
+                  <AutoHeightImage
+                    source={{ uri: `data:image/png;base64,${uploadedNameBase64}` }}
+                    containerStyle={[styles.photoPreviewBox, { marginBottom: 10, padding: 0, overflow: 'hidden' }]}
                   />
                 ) : (
                   <View style={{ height: isTablet ? 80 : 60 }}>
@@ -512,25 +525,25 @@ export default function NewEntryModalScreen({ navigation }: Props) {
                   </View>
                 )}
 
-                <Text style={styles.sectionTitleRight}>विचार अभिव्यक्ति / Expression of Thoughts</Text>
+                <Text style={styles.sectionTitleRight}>विचार / Thoughts</Text>
                 {uploadedRemarksBase64 ? (
-                      <View>
-                        <AutoHeightImage 
-                          source={{ uri: `data:image/png;base64,${uploadedRemarksBase64}` }} 
-                          containerStyle={[styles.remarksPreviewBox, { marginBottom: 10, padding: 0, overflow: 'hidden' }]} 
-                        />
-                        <TouchableOpacity style={styles.editButton} onPress={() => setRemarksModalVisible(true)}>
-                          <Text style={styles.editButtonText}>Edit</Text>
-                        </TouchableOpacity>
-                      </View>
-                    ) : (
-                      <TouchableOpacity
-                        style={styles.addButton}
-                        onPress={() => setRemarksModalVisible(true)}
-                      >
-                        <Text style={styles.addButtonText}>Add+</Text>
-                      </TouchableOpacity>
-                    )}
+                  <View>
+                    <AutoHeightImage
+                      source={{ uri: `data:image/png;base64,${uploadedRemarksBase64}` }}
+                      containerStyle={[styles.remarksPreviewBox, { marginBottom: 10, padding: 0, overflow: 'hidden' }]}
+                    />
+                    <TouchableOpacity style={styles.editButton} onPress={handleOpenRemarks}>
+                      <Text style={styles.editButtonText}>Edit</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.addButton}
+                    onPress={handleOpenRemarks}
+                  >
+                    <Text style={styles.addButtonText}>Add+</Text>
+                  </TouchableOpacity>
+                )}
               </View>
 
               <Modal
@@ -545,12 +558,13 @@ export default function NewEntryModalScreen({ navigation }: Props) {
               >
                 <View style={styles.fullPageContainer}>
                   <View style={styles.fullPageHeader}>
-                    <Text style={styles.fullPageTitle}>विचार अभिव्यक्ति / Expression of Thoughts</Text>
+                    <Text style={styles.fullPageTitle}>विचार / Thoughts</Text>
                     <TouchableOpacity
-                      style={styles.doneBtn}
-                      onPress={handleRemarksDone}
+                      disabled={isSubmitting}
+                      style={[styles.doneBtn, isSubmitting && styles.submitBtnDisabled]}
+                      onPress={handleSubmit}
                     >
-                      <Text style={styles.doneBtnText}>Done</Text>
+                      {isSubmitting ? <ActivityIndicator color="white" /> : <Text style={styles.doneBtnText}>जमा करें / Submit</Text>}
                     </TouchableOpacity>
                   </View>
                   <View style={styles.fullPageCanvasWrap}>
@@ -574,6 +588,7 @@ export default function NewEntryModalScreen({ navigation }: Props) {
                         mode={remarksMode}
                         onDrawingStateChange={setIsDrawing}
                         containerStyle={{ flex: 1, maxHeight: 'none', height: '100%', borderWidth: 0 }}
+                        initialImageBase64={uploadedRemarksBase64}
                       />
                     </View>
                   </View>
@@ -596,7 +611,7 @@ function TouchableActionButton({
   label: string;
   onPress: () => void;
   disabled?: boolean;
-  variant: "blue" | "gray" | "red";
+  variant: "blue" | "gray" | "red" | "green";
 }) {
   return (
     <Pressable
@@ -607,6 +622,7 @@ function TouchableActionButton({
         variant === "blue" && styles.actionBtnBlue,
         variant === "gray" && styles.actionBtnGray,
         variant === "red" && styles.actionBtnRed,
+        variant === "green" && styles.actionBtnGreen,
         disabled && styles.actionBtnDisabled,
       ]}
     >
@@ -694,12 +710,13 @@ const styles = StyleSheet.create({
     color: "#111827",
   },
 
-  photoControls: { gap: 10, marginBottom: 12 },
+  photoControls: { gap: 10, marginTop: 12, marginBottom: 12 },
   actionBtnBase: { borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12, alignItems: "center" },
   actionBtnText: { color: "white", fontWeight: "900", fontSize: 13 },
   actionBtnBlue: { backgroundColor: "#2563EB" },
   actionBtnGray: { backgroundColor: "#6B7280" },
   actionBtnRed: { backgroundColor: "#EF4444" },
+  actionBtnGreen: { backgroundColor: "#10B981" },
   actionBtnDisabled: { opacity: 0.55 },
 
   photoPreviewBox: {

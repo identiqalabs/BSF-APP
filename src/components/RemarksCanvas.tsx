@@ -6,6 +6,7 @@ export interface RemarksCanvasProps {
   onDrawingStateChange?: (isDrawing: boolean) => void;
   mode?: 'pen' | 'eraser';
   containerStyle?: any;
+  initialImageBase64?: string | null;
 }
 
 const CANVAS_HTML = `
@@ -87,13 +88,15 @@ const CANVAS_HTML = `
   const eraserCursor = document.getElementById('eraser-cursor');
   let currentMode = 'pen';
 
-  // Set canvas actual pixel dimensions
-  canvas.width = window.innerWidth - 30;
-  canvas.height = 2000;
+  // Set canvas actual pixel dimensions with DPR scaling for crisp lines
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = (window.innerWidth - 30) * dpr;
+  canvas.height = 2000 * dpr;
+  ctx.scale(dpr, dpr);
 
   // Drawing settings
   ctx.strokeStyle = '#000000';
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 3;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
@@ -162,8 +165,8 @@ const CANVAS_HTML = `
     isDrawing = true;
     const touch = e.touches[0];
     const rect = canvas.getBoundingClientRect();
-    lastX = (touch.clientX - rect.left) * (canvas.width / rect.width);
-    lastY = (touch.clientY - rect.top) * (canvas.height / rect.height);
+    lastX = touch.clientX - rect.left;
+    lastY = touch.clientY - rect.top;
 
     if (window.isEraserMode) {
       eraserCursor.style.display = 'block';
@@ -182,8 +185,8 @@ const CANVAS_HTML = `
     e.stopPropagation();
     const touch = e.touches[0];
     const rect = canvas.getBoundingClientRect();
-    const x = (touch.clientX - rect.left) * (canvas.width / rect.width);
-    const y = (touch.clientY - rect.top) * (canvas.height / rect.height);
+    const x = touch.clientX - rect.left;
+    const y = touch.clientY - rect.top;
     
     if (window.isEraserMode) {
       eraserCursor.style.display = 'block';
@@ -257,27 +260,43 @@ const CANVAS_HTML = `
       window.isEraserMode = true;
     } else {
       ctx.globalCompositeOperation = 'source-over';
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 3;
       window.isEraserMode = false;
       eraserCursor.style.display = 'none';
     }
   };
 
+  // New function to load an existing image onto the canvas
+  window.loadImage = (base64) => {
+    const img = new Image();
+    img.onload = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, img.width / dpr, img.height / dpr);
+    };
+    img.src = 'data:image/png;base64,' + base64;
+  };
+
   updateScrollbar();
   window.addEventListener('resize', () => {
     const rectView = canvas.getBoundingClientRect();
-    canvas.width = rectView.width;
+    canvas.width = rectView.width * dpr;
+    ctx.scale(dpr, dpr);
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
     updateScrollbar();
   });
 </script>
 </body>
 </html>
-`;
+`
 
 const RemarksCanvas = forwardRef<any, RemarksCanvasProps>((props, ref) => {
   const webViewRef = useRef<WebView>(null);
   let imageResolve = useRef<((data: string) => void) | null>(null);
 
+  // Expose methods to parent via ref
   useImperativeHandle(ref, () => ({
     getImage: () => {
       return new Promise((resolve) => {
@@ -293,20 +312,42 @@ const RemarksCanvas = forwardRef<any, RemarksCanvasProps>((props, ref) => {
     },
     clearCanvas: () => {
       webViewRef.current?.injectJavaScript(`window.clearCanvas(); true;`);
+    },
+    loadImage: (base64: string) => {
+      // Load a base64 PNG onto the canvas, clearing previous content first
+      const js = `
+        (function(){
+          const img = new Image();
+          img.onload = function(){
+            const dpr = window.devicePixelRatio || 1;
+            ctx.clearRect(0,0,canvas.width,canvas.height);
+            ctx.drawImage(img, 0, 0, img.width / dpr, img.height / dpr);
+          };
+          img.src = 'data:image/png;base64,' + '${base64}';
+        })();
+        true;`;
+      webViewRef.current?.injectJavaScript(js);
     }
   }));
 
+  // Set drawing mode when prop changes
   useEffect(() => {
     if (props.mode) {
       webViewRef.current?.injectJavaScript(`window.setDrawingMode('${props.mode}'); true;`);
     }
-  }, [props.mode]);
+    // Load initial image if provided
+    if (props.initialImageBase64) {
+      // Slight delay to ensure webview is ready
+      setTimeout(() => {
+        // Call the loadImage method defined above via ref
+        (ref as any).current?.loadImage(props.initialImageBase64);
+      }, 500);
+    }
+  }, [props.mode, props.initialImageBase64]);
 
   const handleMessage = (event: any) => {
     const message = JSON.parse(event.nativeEvent.data);
     if (message.type === 'imageData' && imageResolve.current) {
-      // Strip 'data:image/png;base64,' prefix just to be consistent with previous DrawingCanvas 
-      // where it returned base64 directly
       const base64 = message.data.replace(/^data:image\/(png|jpeg);base64,/, "");
       imageResolve.current(base64);
       imageResolve.current = null;

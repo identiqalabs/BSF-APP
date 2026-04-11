@@ -28,7 +28,7 @@ type Props = {
   containerStyle?: any;
 };
 
-const PEN_COLOR = "#111827";
+const PEN_COLOR = "#000000";
 const PEN_WIDTH = 3;
 
 function stripDataPrefix(dataUrl: string): string {

@@ -1,6 +1,14 @@
 export function formatDateTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
+  // Date-only strings (e.g. "2026-04-09") have no "T" — skip time display
+  if (!iso.includes("T")) {
+    return d.toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "2-digit",
+    });
+  }
   return d.toLocaleString(undefined, {
     year: "numeric",
     month: "short",
