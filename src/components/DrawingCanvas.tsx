@@ -1,6 +1,7 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { Platform, StyleSheet, View } from "react-native";
 import { WebView } from "react-native-webview";
+import * as FileSystem from "expo-file-system/legacy";
 
 type Mode = "pen" | "eraser";
 
@@ -26,6 +27,7 @@ type Props = {
   internalHeight?: number;
   scrollOffset?: number;
   containerStyle?: any;
+  initialImageBase64?: string | null; // pre-load existing image onto the canvas
 };
 
 const PEN_COLOR = "#000000";
@@ -93,7 +95,7 @@ const INTERNAL_CANVAS_HTML = `
 
   function resize() {
     const rect = canvas.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = 1;
     // Keep internal drawing state if possible, but for simplicity we just resize
     canvas.width = rect.width * dpr;
     canvas.height = rect.height * dpr;
@@ -197,11 +199,41 @@ const INTERNAL_CANVAS_HTML = `
     tmp.height = height;
     const tCtx = tmp.getContext('2d');
     tCtx.drawImage(orig, minX, minY, width, height, 0, 0, width, height);
-    return tmp.toDataURL('image/png');
+    const exportCanvas = document.createElement('canvas');
+    const maxExportWidth = 800;
+    const scale = width > maxExportWidth ? (maxExportWidth / width) : 1;
+    exportCanvas.width = Math.max(1, Math.round(width * scale));
+    exportCanvas.height = Math.max(1, Math.round(height * scale));
+    const eCtx = exportCanvas.getContext('2d');
+    eCtx.fillStyle = '#ffffff';
+    eCtx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+    eCtx.drawImage(tmp, 0, 0, exportCanvas.width, exportCanvas.height);
+    return exportCanvas.toDataURL('image/jpeg', 0.95);
   }
 
   window.getCanvasImage = () => {
     return trimCanvas(canvas);
+  };
+
+  window.loadImage = (dataUrl) => {
+    const img = new Image();
+    img.onload = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const imgAspect = img.width / img.height;
+      const canvasAspect = canvas.width / canvas.height;
+      let drawWidth, drawHeight;
+      if (imgAspect > canvasAspect) {
+        drawWidth = canvas.width * 0.8; // 80% of width
+        drawHeight = drawWidth / imgAspect;
+      } else {
+        drawHeight = canvas.height * 0.8; // 80% of height
+        drawWidth = drawHeight * imgAspect;
+      }
+      const drawX = (canvas.width - drawWidth) / 2;
+      const drawY = (canvas.height - drawHeight) / 2;
+      ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
+    };
+    img.src = dataUrl;
   };
 
   window.clearCanvas = () => {
@@ -211,9 +243,9 @@ const INTERNAL_CANVAS_HTML = `
   window.setEraserMode = (enabled) => {
     isErasingMode = enabled;
   };
-</script>
-</body>
-</html>
+<\/script>
+<\/body>
+<\/html>
 `;
 
 const WebDrawingCanvas = forwardRef<DrawingCanvasHandle, Props>(function WebDrawingCanvas(props, ref) {
@@ -271,7 +303,7 @@ const WebDrawingCanvas = forwardRef<DrawingCanvasHandle, Props>(function WebDraw
   useImperativeHandle(ref, () => ({
     save: async () => {
       if (!canvasRef.current) return null;
-      const b64 = canvasRef.current.toDataURL("image/png");
+      const b64 = canvasRef.current.toDataURL("image/jpeg", 0.95);
       return stripDataPrefix(b64);
     },
     clear: () => {
@@ -306,6 +338,41 @@ const WebDrawingCanvas = forwardRef<DrawingCanvasHandle, Props>(function WebDraw
 const NativeDrawingCanvas = forwardRef<DrawingCanvasHandle, Props>(function NativeDrawingCanvas(props, ref) {
   const webViewRef = useRef<WebView>(null);
   const resolveRef = useRef<((val: string | null) => void) | null>(null);
+  const isWebViewReadyRef = useRef(false);
+  const pendingImageRef = useRef<string | null>(null);
+
+  const toRenderableCanvasSrc = async (imageUriOrBase64: string): Promise<string> => {
+    if (!imageUriOrBase64) return "";
+    if (imageUriOrBase64.startsWith("data:image")) return imageUriOrBase64;
+    if (imageUriOrBase64.startsWith("file://")) {
+      try {
+        const b64 = await FileSystem.readAsStringAsync(imageUriOrBase64, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        const lower = imageUriOrBase64.toLowerCase();
+        const mime = lower.endsWith(".png")
+          ? "image/png"
+          : lower.endsWith(".webp")
+          ? "image/webp"
+          : "image/jpeg";
+        return `data:${mime};base64,${b64}`;
+      } catch {
+        return imageUriOrBase64;
+      }
+    }
+    return imageUriOrBase64;
+  };
+
+  const injectLoadImage = async (imageUriOrBase64: string) => {
+    if (!imageUriOrBase64) return;
+    const resolvedSrc = await toRenderableCanvasSrc(imageUriOrBase64);
+    // Wait a tick for the canvas to resize before drawing
+    setTimeout(() => {
+      if (webViewRef.current) {
+        webViewRef.current.injectJavaScript(`window.loadImage(${JSON.stringify(resolvedSrc)}); true;`);
+      }
+    }, 300);
+  };
 
   useEffect(() => {
     webViewRef.current?.injectJavaScript(`window.setEraserMode(${props.mode === 'eraser'}); true;`);
@@ -314,6 +381,16 @@ const NativeDrawingCanvas = forwardRef<DrawingCanvasHandle, Props>(function Nati
   useEffect(() => {
     webViewRef.current?.injectJavaScript(`window.clearCanvas(); true;`);
   }, [props.clearTrigger]);
+
+  useEffect(() => {
+    if (!props.initialImageBase64) return;
+    const t = setTimeout(() => {
+      if (isWebViewReadyRef.current) {
+        void injectLoadImage(props.initialImageBase64!);
+      }
+    }, 250);
+    return () => clearTimeout(t);
+  }, [props.initialImageBase64]);
 
   useImperativeHandle(ref, () => ({
     save: () => {
@@ -341,7 +418,7 @@ const NativeDrawingCanvas = forwardRef<DrawingCanvasHandle, Props>(function Nati
     try {
       const msg = JSON.parse(event.nativeEvent.data);
       if (msg.type === 'imageData') {
-        const base64 = msg.data ? msg.data.replace(/^data:image\/(png|jpeg);base64,/, "") : null;
+        const base64 = msg.data ? msg.data.replace(/^data:image\/(png|jpeg|jpg);base64,/, "") : null;
         props.onSave(base64);
         resolveRef.current?.(base64);
         resolveRef.current = null;
@@ -365,6 +442,16 @@ const NativeDrawingCanvas = forwardRef<DrawingCanvasHandle, Props>(function Nati
         javaScriptEnabled={true}
         domStorageEnabled={true}
         style={{ flex: 1, backgroundColor: 'white' }}
+        onLoadEnd={() => {
+          isWebViewReadyRef.current = true;
+          if (pendingImageRef.current) {
+            const pending = pendingImageRef.current;
+            pendingImageRef.current = null;
+            void injectLoadImage(pending);
+          } else if (props.initialImageBase64) {
+            void injectLoadImage(props.initialImageBase64);
+          }
+        }}
       />
     </View>
   );

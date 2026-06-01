@@ -1,7 +1,9 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, StyleSheet, Image, Text, Pressable } from 'react-native';
-
-const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+import React, { useState, useEffect } from 'react';
+import { View, StyleSheet, Image, Text, TouchableOpacity } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import { useInactivity } from '../context/InactivityContext';
+import { RootStackParamList } from '../navigation/RootNavigator';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 const SLIDESHOW_IMAGES = [
   require('../../assets/image1.png'),
@@ -11,66 +13,61 @@ const SLIDESHOW_IMAGES = [
   require('../../assets/image5.png'),
 ];
 
+type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
+
 export default function InactivityWrapper({ children }: { children: React.ReactNode }) {
-  const [locked, setLocked] = useState(true);
+  const { locked, setLocked } = useInactivity();
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
-
-  const startTimer = useCallback(() => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => {
-      setLocked(true);
-    }, TIMEOUT_MS);
-  }, []);
-
-  const resetTimer = useCallback(() => {
-    if (locked) return;
-    startTimer();
-  }, [locked, startTimer]);
+  const navigation = useNavigation<NavigationProp>();
 
   useEffect(() => {
-    if (!locked) {
-      startTimer();
-      return;
-    }
+    if (!locked) return;
 
     // Start slideshow when locked
     const interval = setInterval(() => {
       setCurrentImageIndex((prev) => (prev + 1) % SLIDESHOW_IMAGES.length);
     }, 4000); // Change image every 4 seconds
 
-    return () => {
-      clearInterval(interval);
-      if (timerRef.current) clearTimeout(timerRef.current);
-    };
-  }, [locked, startTimer]);
+    return () => clearInterval(interval);
+  }, [locked]);
 
-  const handlePointerEvent = () => {
-    resetTimer();
+  const handleCreate = () => {
+    navigation.navigate('NewEntryModal');
+  };
+
+  const handleRecords = () => {
+    setLocked(false);
   };
 
   return (
-    <View
-      style={{ flex: 1 }}
-      onPointerDown={handlePointerEvent}
-      onPointerMove={handlePointerEvent}
-      onTouchStart={handlePointerEvent}
-    >
+    <View style={{ flex: 1 }}>
       {children}
       {locked && (
         <View style={StyleSheet.absoluteFill}>
-          <Pressable style={styles.lockScreen} onPress={() => setLocked(false)}>
+          <View style={styles.lockScreen}>
             <Image source={SLIDESHOW_IMAGES[currentImageIndex]} style={styles.image} resizeMode="cover" />
 
             <View style={styles.centerContainer}>
-              <Text style={styles.titleText}>ASHWINI OFFICERS MESS</Text>
-              <Image source={require('../../assets/bsflogo.png')} style={styles.logo} resizeMode="contain" />
+              <Text style={styles.titleText}>ASHWINI BSF OFFICERS' INSTITUTE</Text>
+              <Image source={require('../../assets/mainlogo.png')} style={styles.logo} resizeMode="contain" />
             </View>
 
-            <View style={styles.overlayTextContainer}>
-              <Text style={styles.tapText}>Tap to continue</Text>
+            <View style={styles.buttonContainer}>
+              <TouchableOpacity
+                style={[styles.homeButton, styles.createButton]}
+                onPress={handleCreate}
+              >
+                <Text style={styles.buttonText}>New Entry</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.homeButton, styles.recordsButton]}
+                onPress={handleRecords}
+              >
+                <Text style={styles.buttonText}>Records</Text>
+              </TouchableOpacity>
             </View>
-          </Pressable>
+          </View>
         </View>
       )}
     </View>
@@ -93,12 +90,12 @@ const styles = StyleSheet.create({
   centerContainer: {
     position: 'absolute',
     alignSelf: 'center',
-    top: '20%',
+    top: '15%',
     alignItems: 'center',
     width: '90%',
   },
   titleText: {
-    fontSize: 36,
+    fontSize: 48,
     fontWeight: '900',
     color: 'black',
     textAlign: 'center',
@@ -108,25 +105,40 @@ const styles = StyleSheet.create({
     textShadowRadius: 8,
   },
   logo: {
-    width: 200,
-    height: 200,
+    width: 320,
+    height: 320,
   },
-  overlayTextContainer: {
+  buttonContainer: {
     position: 'absolute',
-    bottom: 80,
-    backgroundColor: 'rgba(255, 255, 255, 0.85)',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
+    bottom: '15%',
+    flexDirection: 'row',
+    gap: 30,
+    paddingHorizontal: 40,
+    width: '100%',
+    justifyContent: 'center',
   },
-  tapText: {
-    fontSize: 24,
+  homeButton: {
+    paddingVertical: 24,
+    paddingHorizontal: 48,
+    borderRadius: 20,
+    minWidth: 280,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  createButton: {
+    backgroundColor: '#16A34A', // Green
+  },
+  recordsButton: {
+    backgroundColor: '#2563EB', // Blue
+  },
+  buttonText: {
+    fontSize: 28,
     fontWeight: '900',
-    color: '#111827',
+    color: 'white',
   }
 });

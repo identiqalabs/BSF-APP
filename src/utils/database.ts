@@ -1,10 +1,64 @@
 import * as SQLite from 'expo-sqlite';
+import * as FileSystem from 'expo-file-system/legacy';
 import type { VisitorEntry } from '../types/VisitorEntry';
+import { backupEntry } from './backup';
+import { optimizeDrawingToEntryFile, optimizePhotoToEntryFile } from './imageStorage';
 
 // Open synchronous or async database
 const DB_NAME = 'visitor_register.db';
 
 const dbPromise = SQLite.openDatabaseAsync(DB_NAME);
+
+
+export function isBase64(str: string): boolean {
+  if (!str) return false;
+  
+  if (str.startsWith('data:image')) return true;
+  
+  if (str.startsWith('file://') || str.startsWith('http://') || str.startsWith('https://')) return false;
+  
+  // A heuristic for raw base64 logic. Usually from the canvases, they aren't standard URIs.
+  if (str.length > 100) return true;
+  
+  return false;
+}
+
+async function processImageUri(imageStr?: string | null, prefix = 'img'): Promise<string> {
+  if (!imageStr) return '';
+  
+  if (isBase64(imageStr)) {
+     if (prefix === 'photo') return optimizePhotoToEntryFile(imageStr);
+     return optimizeDrawingToEntryFile(imageStr, prefix === 'remarks' ? 'remarks' : 'name');
+  } else if (imageStr.startsWith('file://')) {
+     if (imageStr.includes('/entries/')) {
+       return imageStr;
+     }
+     if (prefix === 'photo') return optimizePhotoToEntryFile(imageStr);
+     return optimizeDrawingToEntryFile(imageStr, prefix === 'remarks' ? 'remarks' : 'name');
+  }
+  return imageStr;
+}
+
+async function migrateInlineBase64ToFiles(): Promise<void> {
+  const db = await dbPromise;
+  const rows = await db.getAllAsync<any>(
+    `SELECT id, photo, signature, remarks FROM visitor_entries
+     WHERE photo LIKE 'data:image%' OR signature LIKE 'data:image%' OR remarks LIKE 'data:image%'`
+  );
+  if (!rows.length) return;
+
+  console.log(`[db-migration] Converting ${rows.length} inline base64 rows to file URIs...`);
+  for (const row of rows) {
+    const photo = await processImageUri(row.photo, 'photo');
+    const signature = await processImageUri(row.signature, 'name');
+    const remarks = await processImageUri(row.remarks, 'remarks');
+    await db.runAsync(
+      `UPDATE visitor_entries SET photo = ?, signature = ?, remarks = ? WHERE id = ?`,
+      [photo, signature, remarks, row.id]
+    );
+  }
+  console.log('[db-migration] Inline base64 migration complete.');
+}
 
 export async function initDatabase() {
   const db = await dbPromise;
@@ -49,11 +103,17 @@ export async function initDatabase() {
   } catch (e) {
     // Ignore if column exists
   }
+  await migrateInlineBase64ToFiles();
   console.log('Database initialized');
 }
 
 export async function saveEntry(entry: VisitorEntry): Promise<void> {
   const db = await dbPromise;
+
+  const processedPhoto = await processImageUri(entry.photoUri, 'photo');
+  const processedSignature = await processImageUri(entry.nameUri, 'name');
+  const processedRemarks = await processImageUri(entry.remarksUri, 'remarks');
+
   await db.runAsync(
     `INSERT OR REPLACE INTO visitor_entries (
       id, date, visitor_name, dignitary_name, personToMeet, phoneNumber, remarks, photo, signature, is_imported, host_action, created_at
@@ -65,14 +125,17 @@ export async function saveEntry(entry: VisitorEntry): Promise<void> {
       entry.dignitaryName,
       entry.personToMeet,
       entry.phoneNumber,
-      entry.remarksUri, // stored via base64 data url
-      entry.photoUri,   // base64
-      entry.nameUri,    // base64
+      processedRemarks,
+      processedPhoto,
+      processedSignature,
       entry.isImported ? 1 : 0,
       entry.hostAction ?? null,
       new Date().toISOString()
     ]
   );
+
+  // Trigger backup in background — never await at top level to avoid blocking UI
+  backupEntry(entry).catch(err => console.error('Background backup error:', err));
 }
 
 export async function getAllEntries(): Promise<VisitorEntry[]> {
@@ -97,6 +160,17 @@ export async function getAllEntries(): Promise<VisitorEntry[]> {
 
 export async function deleteEntry(id: string): Promise<void> {
   const db = await dbPromise;
+
+  const result = await db.getAllAsync<any>('SELECT photo, signature, remarks FROM visitor_entries WHERE id = ?', [id]);
+  if (result.length > 0) {
+     const {photo, signature, remarks} = result[0];
+     for (const uri of [photo, signature, remarks]) {
+        if (uri && uri.startsWith('file://') && !isBase64(uri)) {
+           try { await FileSystem.deleteAsync(uri, { idempotent: true }); } catch (e) {}
+        }
+     }
+  }
+
   await db.runAsync('DELETE FROM visitor_entries WHERE id = ?', [id]);
 }
 
@@ -133,6 +207,16 @@ export async function searchEntries(query: string): Promise<VisitorEntry[]> {
 
 export async function replaceEntries(entries: VisitorEntry[]): Promise<void> {
   const db = await dbPromise;
+
+  const existingRows = await db.getAllAsync<any>('SELECT photo, signature, remarks FROM visitor_entries');
+  for (const row of existingRows) {
+     for (const uri of [row.photo, row.signature, row.remarks]) {
+        if (uri && uri.startsWith('file://') && !isBase64(uri)) {
+           try { await FileSystem.deleteAsync(uri, { idempotent: true }); } catch (e) {}
+        }
+     }
+  }
+
   await db.execAsync('DELETE FROM visitor_entries');
   for (const entry of entries) {
     await saveEntry(entry);

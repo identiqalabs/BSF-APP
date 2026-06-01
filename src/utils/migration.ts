@@ -1,22 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as FileSystem from 'expo-file-system/legacy';
 import { saveEntry } from './database';
-
-async function getAsDataUrl(uri: string, isJpeg: boolean = false): Promise<string> {
-  if (!uri) return '';
-  if (uri.startsWith('data:')) return uri;
-
-  try {
-    if (uri.startsWith('file://')) {
-      const base64 = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' });
-      const mime = isJpeg ? 'image/jpeg' : 'image/png';
-      return `data:${mime};base64,${base64}`;
-    }
-  } catch (err) {
-    console.error('Error reading file to base64', uri, err);
-  }
-  return uri;
-}
 
 export async function migrateFromAsyncStorage() {
   try {
@@ -39,16 +22,12 @@ export async function migrateFromAsyncStorage() {
         for (const item of parsed) {
           if (!item || typeof item !== 'object') continue;
 
-          const photoDataUrl = await getAsDataUrl(item.photoUri, true);
-          const nameDataUrl = await getAsDataUrl(item.nameUri, false);
-          const remarksDataUrl = await getAsDataUrl(item.remarksUri, false);
-
           const entry = {
             id: String(item.id ?? ''),
             dateTimeISO: String(item.dateTimeISO ?? ''),
-            photoUri: photoDataUrl,
-            nameUri: nameDataUrl,
-            remarksUri: remarksDataUrl,
+            photoUri: String(item.photoUri ?? ''),
+            nameUri: String(item.nameUri ?? ''),
+            remarksUri: String(item.remarksUri ?? ''),
             dignitaryName: String(item.dignitaryName ?? ''),
             personToMeet: String(item.personToMeet ?? ''),
             phoneNumber: String(item.phoneNumber ?? '')

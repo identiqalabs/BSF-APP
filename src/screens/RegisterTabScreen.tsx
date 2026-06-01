@@ -20,7 +20,7 @@ export default function RegisterTabScreen() {
           }}
           style={[styles.createBtn, isTablet && { width: 300, alignSelf: "flex-start", marginTop: 30 }]}
         >
-          <Text style={[styles.createBtnText, isTablet && { fontSize: 18 }]}>Create New Entry</Text>
+          <Text style={[styles.createBtnText, isTablet && { fontSize: 18 }]}>New Entry</Text>
         </TouchableOpacity>
       </View>
     </View>

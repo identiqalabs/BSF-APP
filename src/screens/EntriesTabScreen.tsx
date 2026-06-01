@@ -2,19 +2,21 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, FlatList, Image, Platform, Pressable, StyleSheet, Text, TextInput, View, ActivityIndicator, TouchableOpacity, useWindowDimensions, Modal } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import DateTimePicker, { type DateTimePickerEvent } from "@react-native-community/datetimepicker";
+import { SafeAreaView } from "react-native-safe-area-context";
 import * as FileSystem from "expo-file-system/legacy";
 import * as DocumentPicker from "expo-document-picker";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
+import * as ImageManipulator from "expo-image-manipulator";
 
 import { getAllEntries, importEntries, replaceEntries, updateHostAction } from "../utils/database";
 import type { VisitorEntry } from "../types/VisitorEntry";
 import { formatDateTime } from "../utils/format";
 import { loadLastBackup, setLastBackup } from "../storage/lastBackup";
-import * as ImagePicker from "expo-image-picker";
-import { extractEntriesFromImage } from "../utils/extractEntries";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import type { RootStackParamList } from "../navigation/RootNavigator";
+import { RootStackParamList } from "../navigation/RootNavigator";
+import { useInactivity } from "../context/InactivityContext";
+import { getDeletePassword } from "../utils/password";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Dashboard">;
 
@@ -34,6 +36,34 @@ function formatDDMMYYYY(d: Date): string {
   return `${dd}/${mm}/${yyyy}`;
 }
 
+function guessMimeType(uri: string, fallback: "image/jpeg" | "image/png"): "image/jpeg" | "image/png" {
+  const lower = uri.toLowerCase();
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  return fallback;
+}
+
+async function toPortableImageValue(
+  value: string | undefined | null,
+  fallbackMime: "image/jpeg" | "image/png"
+): Promise<string> {
+  if (!value) return "";
+  if (value.startsWith("data:image")) return value;
+  if (!value.startsWith("file://")) return value;
+
+  try {
+    const info = await FileSystem.getInfoAsync(value);
+    if (!info.exists) return "";
+    const mime = guessMimeType(value, fallbackMime);
+    const base64 = await FileSystem.readAsStringAsync(value, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+    return `data:${mime};base64,${base64}`;
+  } catch {
+    return "";
+  }
+}
+
 function withinRange(entryISO: string, activeFrom: Date | null, activeTo: Date | null): boolean {
   const entryDateStr = toIsoDate(entryISO);
   if (!entryDateStr) return true;
@@ -47,7 +77,16 @@ function withinRange(entryISO: string, activeFrom: Date | null, activeTo: Date |
   return true;
 }
 
-function DashboardContent({ navigation, isLegacyPopup, setViewingLegacy }: Props & { isLegacyPopup?: boolean, setViewingLegacy: (val: boolean) => void }) {
+function DashboardContent({
+  navigation,
+  isLegacyPopup,
+  setViewingLegacy,
+}: {
+  navigation: Props["navigation"];
+  isLegacyPopup?: boolean;
+  setViewingLegacy: (val: boolean) => void;
+}) {
+  const { setLocked } = useInactivity();
   const { width } = useWindowDimensions();
   const isTablet = width > 768;
   const [entries, setEntries] = useState<VisitorEntry[]>([]);
@@ -66,10 +105,11 @@ function DashboardContent({ navigation, isLegacyPopup, setViewingLegacy }: Props
 
   const [exporting, setExporting] = useState(false);
   const [busyJson, setBusyJson] = useState(false);
-  const [processingPhysical, setProcessingPhysical] = useState(false);
   const [lastBackupLabel, setLastBackupLabel] = useState<string>("--");
   const [isActionModalVisible, setIsActionModalVisible] = useState(false);
+  const [isDeleteModalVisible, setIsDeleteModalVisible] = useState(false);
   const [actionInput, setActionInput] = useState("");
+  const [deletePassword, setDeletePassword] = useState("");
   const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
@@ -102,7 +142,7 @@ function DashboardContent({ navigation, isLegacyPopup, setViewingLegacy }: Props
 
   const filtered = useMemo(() => {
     let res = entries.filter((e) => {
-      const isLegacy = !e.isImported && !e.nameUri;
+      const isLegacy = !e.isImported && !e.dateTimeISO.includes("T");
       return isLegacyPopup ? isLegacy : !isLegacy;
     });
 
@@ -160,7 +200,7 @@ function DashboardContent({ navigation, isLegacyPopup, setViewingLegacy }: Props
           format: "a4",
         });
 
-        const title = "Ashwini Officers' Mess - Visitor Register";
+        const title = "Ashwini BSF Officers' Institute - Visitor Register";
         doc.setFontSize(16);
         doc.text(title, 40, 30);
 
@@ -200,17 +240,10 @@ function DashboardContent({ navigation, isLegacyPopup, setViewingLegacy }: Props
           } catch { }
 
           try {
-            if (e.nameUri) {
-              let nameDataUrl = e.nameUri;
-              if (e.nameUri.startsWith("file://")) {
-                const nameBase64 = await FileSystem.readAsStringAsync(e.nameUri, { encoding: (FileSystem as any).EncodingType?.Base64 });
-                nameDataUrl = `data:image/png;base64,${nameBase64}`;
-              } else if (e.nameUri.startsWith("data:image")) {
-                nameDataUrl = e.nameUri;
-              }
-              doc.addImage(nameDataUrl, "PNG", 110, y + 10, 150, 50);
-
-
+            if (e.dignitaryName) {
+              doc.setFont("helvetica", "bold");
+              doc.setFontSize(10);
+              doc.text(e.dignitaryName, 110, y + 35, { maxWidth: 150 });
             }
           } catch { }
 
@@ -260,100 +293,102 @@ function DashboardContent({ navigation, isLegacyPopup, setViewingLegacy }: Props
       // Mobile implementation (Android/iOS)
       setExporting(true);
       try {
-        console.log("PDF Export: Starting HTML generation");
+        console.log("PDF Export: Starting image processing and HTML generation");
+
+        // Helper to resize images for the report to prevent OOM
+        const prepImg = async (uri: string | undefined | null, isPng = false) => {
+          if (!uri) return null;
+          try {
+            const result = await ImageManipulator.manipulateAsync(
+              uri,
+              [{ resize: { width: 300 } }], // Small thumbnails for the list
+              { compress: 0.6, format: isPng ? ImageManipulator.SaveFormat.PNG : ImageManipulator.SaveFormat.JPEG, base64: true }
+            );
+            return `data:image/${isPng ? 'png' : 'jpeg'};base64,${result.base64}`;
+          } catch (e) {
+            console.warn("Failed to prep image for PDF:", e);
+            // Fallback to raw if it's already a data URI
+            if (uri.startsWith('data:image')) return uri;
+            return null;
+          }
+        };
+
+        const rows = [];
+        for (const e of filtered) {
+          const [photoUrl, nameUrl, remarksUrl] = await Promise.all([
+            prepImg(e.photoUri, false),
+            null, // nameUri removed
+            prepImg(e.remarksUri, true)
+          ]);
+
+          const photoHtml = photoUrl
+            ? `<img src="${photoUrl}" style="width:70px;height:70px;object-fit:cover;border-radius:8px;border:1px solid #eee;"/>`
+            : `<div style="width:70px;height:70px;background:#f3f4f6;border-radius:8px;"></div>`;
+
+          const nameHtml = e.dignitaryName
+            ? `<div style="font-size:12px;font-weight:bold;color:#111827;">${e.dignitaryName}</div>`
+            : `-`;
+
+          const remarksImgHtml = remarksUrl
+            ? `<img src="${remarksUrl}" style="width:280px;height:90px;object-fit:contain;"/>`
+            : `-`;
+
+          rows.push(`
+            <tr>
+              <td>${photoHtml}</td>
+              <td style="width: 25%">${nameHtml}</td>
+              <td style="width: 40%">${remarksImgHtml}</td>
+              <td class="date-cell">${formatDateTime(e.dateTimeISO).replace(', ', '<br/>')}</td>
+            </tr>
+          `);
+        }
 
         const html = `
+          <!DOCTYPE html>
           <html>
             <head>
+              <meta charset="utf-8"/>
               <style>
-                body { font-family: 'Helvetica', sans-serif; padding: 20px; color: #374151; }
-                header { text-align: center; margin-bottom: 20px; border-bottom: 2px solid #2563EB; padding-bottom: 15px; }
-                h1 { font-size: 20px; margin: 0; color: #111827; }
-                h2 { font-size: 16px; margin: 5px 0 0 0; color: #4B5563; }
-                table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-                th { background-color: #f9fafb; padding: 12px 8px; text-align: center; font-size: 13px; font-weight: bold; border-bottom: 2px solid #e5e7eb; }
-                td { padding: 15px 8px; text-align: center; border-bottom: 1px solid #f3f4f6; vertical-align: middle; }
-                .photo { width: 90px; height: 90px; object-fit: cover; border-radius: 8px; border: 1px solid #e5e7eb; }
-                .signature-name { max-width: 150px; height: 60px; object-fit: contain; }
-                .signature-remarks { max-width: 350px; height: 120px; object-fit: contain; }
-                .date-cell { text-align: left; font-size: 12px; white-space: nowrap; }
-
+                @page { margin: 15mm; }
+                body { font-family: sans-serif; padding: 20px; color: #374151; -webkit-print-color-adjust: exact; }
+                header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #111827; padding-bottom: 15px; }
+                h1 { font-size: 20px; margin: 0; color: #111827; font-weight: bold; }
+                h2 { font-size: 14px; margin: 5px 0 0 0; color: #4B5563; text-transform: uppercase; letter-spacing: 1px; }
+                table { width: 100%; border-collapse: collapse; margin-top: 10px; page-break-inside: auto; }
+                tr { page-break-inside: avoid; page-break-after: auto; }
+                th { background-color: #f9fafb; padding: 12px 8px; text-align: center; font-size: 11px; font-weight: bold; border-bottom: 2px solid #e5e7eb; text-transform: uppercase; }
+                td { padding: 10px 5px; text-align: center; border-bottom: 1px solid #f3f4f6; vertical-align: middle; }
+                .date-cell { text-align: left; font-size: 10px; color: #6b7280; font-weight: 500; }
               </style>
             </head>
             <body>
               <header>
-                <h1>ASHWINI OFFICERS' MESS</h1>
-                <h2>Visitor Register</h2>
+                <h1>ASHWINI BSF OFFICERS' INSTITUTE</h1>
+                <h2>Visitor Register Report</h2>
               </header>
               <table>
                 <thead>
                   <tr>
-                    <th>तस्वीर / Photo</th>
-                    <th style="width: 30%">नाम / Name</th>
-                    <th style="width: 35%">विचार /Thoughts</th>
-                    <th style="text-align: left">दिनांक / Date</th>
+                    <th>Photo</th>
+                    <th>Name & Designation</th>
+                    <th>Thoughts / Remarks</th>
+                    <th>Date & Time</th>
                   </tr>
                 </thead>
                 <tbody>
-                  ${(await Promise.all(filtered.map(async e => {
-          let photoHtml = '<div style="width:90px;height:90px;background:#f3f4f6;border-radius:8px;"></div>';
-          if (e.photoUri) {
-            let base64 = '';
-            if (e.photoUri.startsWith('data:image')) {
-              base64 = e.photoUri.split(',')[1];
-            } else if (e.photoUri.startsWith("file://")) {
-              base64 = await FileSystem.readAsStringAsync(e.photoUri, { encoding: (FileSystem as any).EncodingType?.Base64 });
-            }
-            photoHtml = `<img src="data:image/jpeg;base64,${base64}" class="photo" />`;
-          }
-
-          let nameImg = '-';
-          if (e.nameUri) {
-            let base64 = '';
-            if (e.nameUri.startsWith('data:image')) {
-              base64 = e.nameUri.split(',')[1];
-            } else if (e.nameUri.startsWith("file://")) {
-              base64 = await FileSystem.readAsStringAsync(e.nameUri, { encoding: (FileSystem as any).EncodingType?.Base64 });
-            }
-            nameImg = `<img src="data:image/png;base64,${base64}" class="signature-name" />`;
-          }
-
-          let remarksImg = '-';
-          if (e.remarksUri) {
-            let base64 = '';
-            if (e.remarksUri.startsWith('data:image')) {
-              base64 = e.remarksUri.split(',')[1];
-            } else if (e.remarksUri.startsWith("file://")) {
-              base64 = await FileSystem.readAsStringAsync(e.remarksUri, { encoding: (FileSystem as any).EncodingType?.Base64 });
-            }
-            remarksImg = `<img src="data:image/png;base64,${base64}" class="signature-remarks" />`;
-          }
-
-          return `
-                    <tr>
-                      <td>${photoHtml}</td>
-                      <td>${nameImg}</td>
-                      <td>${remarksImg}</td>
-                      <td class="date-cell">${formatDateTime(e.dateTimeISO).replace(', ', '<br/>')}</td>
-                    </tr>
-                    `;
-        }))).join('')}
+                  ${rows.join('')}
                 </tbody>
               </table>
             </body>
           </html>
         `;
 
-
         console.log("PDF Export: Executing printAsync");
         await Print.printAsync({ html });
         console.log("PDF Export: Print dialog opened successfully");
       } catch (err: any) {
         console.error(`PDF Export Failed:`, err);
-        Alert.alert(
-          "Export PDF failed",
-          `Error: ${err.message || 'Unknown error'}`
-        );
+        Alert.alert("Export PDF failed", `Error: ${err.message || 'Unknown error'}`);
       } finally {
         setExporting(false);
       }
@@ -371,7 +406,14 @@ function DashboardContent({ navigation, isLegacyPopup, setViewingLegacy }: Props
 
     setBusyJson(true);
     try {
-      const snapshot = entries;
+      const snapshot = await Promise.all(
+        entries.map(async (entry) => ({
+          ...entry,
+          photoUri: await toPortableImageValue(entry.photoUri, "image/jpeg"),
+          nameUri: await toPortableImageValue(entry.nameUri, "image/png"),
+          remarksUri: await toPortableImageValue(entry.remarksUri, "image/png"),
+        }))
+      );
       const json = JSON.stringify(snapshot, null, 2);
       const fileName = `visitor-backup-${Date.now()}.json`;
 
@@ -420,60 +462,6 @@ function DashboardContent({ navigation, isLegacyPopup, setViewingLegacy }: Props
     }
   }
 
-  async function handleUploadPhysical() {
-    if (processingPhysical) return;
-
-    try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        allowsMultipleSelection: true,
-        quality: 0.8,
-      });
-
-      if (result.canceled || !result.assets || result.assets.length === 0) return;
-
-      // Check for PDFs through DocumentPicker if needed, but ImagePicker handles images.
-      // The user request specified PDF check, but ImagePicker is filtered for images.
-      // If we used DocumentPicker we'd check extensions.
-
-      setProcessingPhysical(true);
-      const allExtracted: any[] = [];
-      let totalDebugInfo = "";
-
-      for (let i = 0; i < result.assets.length; i++) {
-        const asset = result.assets[i];
-        // Processing page X of Y...
-        console.log(`Processing page ${i + 1} of ${result.assets.length}...`);
-
-        try {
-          const { entries, debugInfo } = await extractEntriesFromImage(asset.uri);
-          totalDebugInfo += debugInfo + "\n\n";
-
-          if (entries.length === 0) {
-            console.log(`No entries extracted from image ${i + 1}`);
-          }
-          allExtracted.push(...entries);
-        } catch (err) {
-          Alert.alert("Error", `Failed to process image ${i + 1}.`);
-        }
-      }
-
-      if (allExtracted.length === 0 && !totalDebugInfo) {
-        Alert.alert("Error", "No data could be read from any image.");
-        return;
-      }
-
-      navigation.navigate("ImportPreview", {
-        extractedEntries: allExtracted,
-        debugInfo: totalDebugInfo
-      });
-    } catch (error) {
-      Alert.alert("Error", "An error occurred while selecting or processing images.");
-    } finally {
-      setProcessingPhysical(false);
-    }
-  }
-
   async function handleRestoreJson() {
     if (busyJson) return;
     setBusyJson(true);
@@ -482,13 +470,24 @@ function DashboardContent({ navigation, isLegacyPopup, setViewingLegacy }: Props
         type: "application/json",
         copyToCacheDirectory: true,
       });
-      if (res.canceled) return;
+      if (res.canceled) {
+        setBusyJson(false);
+        return;
+      }
       if (!res.assets?.[0]?.uri) throw new Error("No file uri");
       const raw = await FileSystem.readAsStringAsync(res.assets[0].uri);
       const parsed: unknown = JSON.parse(raw);
       if (!Array.isArray(parsed)) throw new Error("Invalid shape");
 
-      const entriesToImport = parsed as VisitorEntry[];
+      const rawEntries = parsed as VisitorEntry[];
+      const entriesToImport = await Promise.all(
+        rawEntries.map(async (entry) => ({
+          ...entry,
+          photoUri: await toPortableImageValue(entry.photoUri, "image/jpeg"),
+          nameUri: await toPortableImageValue(entry.nameUri, "image/png"),
+          remarksUri: await toPortableImageValue(entry.remarksUri, "image/png"),
+        }))
+      );
 
       Alert.alert(
         "Confirm Restore",
@@ -552,12 +551,36 @@ function DashboardContent({ navigation, isLegacyPopup, setViewingLegacy }: Props
     }
   }
 
+  function openDeleteModal(entryId: string) {
+    setSelectedEntryId(entryId);
+    setDeletePassword("");
+    setIsDeleteModalVisible(true);
+  }
+
+  async function handleConfirmDelete() {
+    if (!selectedEntryId) return;
+    const correctPassword = await getDeletePassword();
+    if (deletePassword === correctPassword) {
+      try {
+        const { deleteEntry } = require("../utils/database");
+        await deleteEntry(selectedEntryId);
+        await reload();
+        setIsDeleteModalVisible(false);
+        Alert.alert("Success", "Entry deleted successfully.");
+      } catch (err) {
+        Alert.alert("Error", "Failed to delete entry.");
+      }
+    } else {
+      Alert.alert("Error", "Incorrect password.");
+    }
+  }
+
   return (
-    <View style={styles.screen}>
+    <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
       <View style={styles.brandHeader}>
-        <Image source={require("../../assets/bsflogo.png")} style={styles.logo} resizeMode="contain" />
+        <Image source={require("../../assets/mainlogo.png")} style={styles.logo} resizeMode="contain" />
         <View style={{ flex: 1 }}>
-          <Text style={styles.brandTitle}>ASHWINI OFFICERS' MESS</Text>
+          <Text style={styles.brandTitle}>ASHWINI BSF OFFICERS' INSTITUTE</Text>
           <Text style={[styles.brandSubtitle, { textAlign: "center", width: "100%" }]}>
             {isLegacyPopup ? "Legacy Records Dashboard" : "Visitor Book"}
           </Text>
@@ -573,12 +596,20 @@ function DashboardContent({ navigation, isLegacyPopup, setViewingLegacy }: Props
         )}
 
         {!isLegacyPopup && (
-          <TouchableOpacity
-            onPress={() => navigation.navigate("NewEntryModal")}
-            style={styles.createBtn}
-          >
-            <Text style={styles.createBtnText}>Create</Text>
-          </TouchableOpacity>
+          <>
+            <TouchableOpacity
+              onPress={() => navigation.navigate('Settings')}
+              style={[styles.createBtn, { backgroundColor: "#4B5563", marginRight: 10 }]}
+            >
+              <Text style={styles.createBtnText}>Settings</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setLocked(true)}
+              style={[styles.createBtn, { backgroundColor: "#1F2937" }]}
+            >
+              <Text style={styles.createBtnText}>Home</Text>
+            </TouchableOpacity>
+          </>
         )}
       </View>
 
@@ -672,10 +703,9 @@ function DashboardContent({ navigation, isLegacyPopup, setViewingLegacy }: Props
 
           <TouchableOpacity
             onPress={() => isLegacyPopup ? navigation.navigate('LegacyEntry') : setViewingLegacy(true)}
-            disabled={processingPhysical}
-            style={[styles.actionBtn, { backgroundColor: "#0B1220" }, processingPhysical && { opacity: 0.5 }]}
+            style={[styles.actionBtn, { backgroundColor: "#0B1220" }]}
           >
-            {processingPhysical ? <ActivityIndicator color="white" /> : <Text style={styles.actionBtnText}>{isLegacyPopup ? "Upload Legacy Records" : "Legacy Records"}</Text>}
+            <Text style={styles.actionBtnText}>{isLegacyPopup ? "Upload Legacy Records" : "Legacy Records"}</Text>
           </TouchableOpacity>
         </View>
 
@@ -704,10 +734,8 @@ function DashboardContent({ navigation, isLegacyPopup, setViewingLegacy }: Props
                   <Text style={styles.th}>विचार / Thoughts</Text>
                 </View>
                 <View style={styles.colDate}>
-                  <Text style={styles.th}>दिनांक / Date</Text>
+                  <Text style={styles.th}>दिनांक और समय / Date & Time</Text>
                 </View>
-
-
               </View>
             }
             ListEmptyComponent={
@@ -726,7 +754,7 @@ function DashboardContent({ navigation, isLegacyPopup, setViewingLegacy }: Props
                 style={styles.tableRow}
               >
                 <View style={styles.colPhoto}>
-                  <Image source={{ uri: item.photoUri }} style={styles.photoThumb} resizeMode="cover" />
+                  <Image source={{ uri: item.photoUri }} style={styles.photoThumb} resizeMode="cover" resizeMethod="resize" />
                   {item.hostAction && (
                     <View style={styles.hostActionBadge} />
                   )}
@@ -741,11 +769,6 @@ function DashboardContent({ navigation, isLegacyPopup, setViewingLegacy }: Props
                           {item.dignitaryName}
                         </Text>
                       )}
-                      <Image
-                        source={{ uri: item.nameUri }}
-                        style={styles.nameThumb}
-                        resizeMode="contain"
-                      />
                     </View>
                   )}
                 </View>
@@ -757,6 +780,7 @@ function DashboardContent({ navigation, isLegacyPopup, setViewingLegacy }: Props
                       source={{ uri: item.remarksUri }}
                       style={styles.remarksThumb}
                       resizeMode="contain"
+                      resizeMethod="resize"
                     />
                   )}
                 </View>
@@ -771,6 +795,16 @@ function DashboardContent({ navigation, isLegacyPopup, setViewingLegacy }: Props
                     style={styles.addActionBtn}
                   >
                     <Text style={styles.addActionBtnText}>{item.hostAction ? "Edit" : "+ Action"}</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      openDeleteModal(item.id);
+                    }}
+                    style={[styles.addActionBtn, { backgroundColor: "#EF4444", marginTop: 8 }]}
+                  >
+                    <Text style={styles.addActionBtnText}>Delete</Text>
                   </TouchableOpacity>
                 </View>
               </Pressable>
@@ -858,14 +892,46 @@ function DashboardContent({ navigation, isLegacyPopup, setViewingLegacy }: Props
           </View>
         </View>
       </Modal>
-    </View>
+
+      <Modal
+        visible={isDeleteModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setIsDeleteModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Confirm Deletion</Text>
+            <Text style={{ fontWeight: "700", color: "#374151" }}>Please enter password to delete this entry:</Text>
+            <TextInput
+              style={[styles.modalInput, { minHeight: 50 }]}
+              placeholder="Enter password"
+              value={deletePassword}
+              onChangeText={setDeletePassword}
+              secureTextEntry
+            />
+            <View style={styles.modalButtons}>
+              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: "#EF4444" }]} onPress={handleConfirmDelete}>
+                <Text style={styles.modalBtnText}>Delete</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.modalBtn, styles.cancelBtn]} onPress={() => setIsDeleteModalVisible(false)}>
+                <Text style={[styles.modalBtnText, { color: "#374151" }]}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: "white" },
   brandHeader: { flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingTop: 12, paddingBottom: 8, gap: 12 },
-  logo: { width: 64, height: 64, borderRadius: 10, backgroundColor: "transparent" },
+  logo: {
+    width: 110,
+    height: 110,
+  },
   brandTitle: { fontSize: 18, fontWeight: "900", color: "#111827" },
   brandSubtitle: { fontSize: 16, fontWeight: "800", color: "#374151", marginTop: 3, textAlign: "center" },
 
@@ -906,13 +972,13 @@ const styles = StyleSheet.create({
   colPhoto: { flex: 0.8, alignItems: "center", justifyContent: "center" },
   colName: { flex: 2.2, alignItems: "center", justifyContent: "center" },
   colRemarks: { flex: 3.0, alignItems: "center", justifyContent: "center" },
-  colDate: { flex: 1.6, alignItems: "flex-start", justifyContent: "center" },
+  colDate: { flex: 1.6, alignItems: "center", justifyContent: "center" },
 
   tableRow: { width: "100%", flexDirection: "row", paddingHorizontal: 0, alignItems: "center", backgroundColor: "white", borderRadius: 16, borderWidth: 1, borderColor: "#E5E7EB", paddingVertical: 12, alignSelf: "stretch", justifyContent: "space-between" },
   photoThumb: { width: 80, height: 80, borderRadius: 14, borderWidth: 1, borderColor: "#E5E7EB" },
   nameThumb: { width: 220, height: 110, borderRadius: 12, borderWidth: 1, borderColor: "#E5E7EB", backgroundColor: "#F9FAFB" },
   remarksThumb: { width: 350, height: 110, borderRadius: 12, borderWidth: 1, borderColor: "#E5E7EB", backgroundColor: "#F9FAFB" },
-  dateText: { fontWeight: "900", color: "#374151", fontSize: 14 },
+  dateText: { fontWeight: "900", color: "#374151", fontSize: 14, textAlign: "center" },
   importedText: { fontSize: 12, fontWeight: "700", color: "#1F2937", textAlign: "center" },
 
   addActionBtn: {
@@ -1005,8 +1071,8 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: "white"
   },
-  nameCellContent: { flexDirection: "row", alignItems: "center", gap: 10, justifyContent: "flex-start", flex: 1, paddingHorizontal: 10 },
-  dignitaryNameText: { fontSize: 13, color: "#111827", fontWeight: "700", flex: 0.6, textAlign: "left" },
+  nameCellContent: { flexDirection: "row", alignItems: "center", gap: 10, justifyContent: "center", flex: 1, paddingHorizontal: 10 },
+  dignitaryNameText: { fontSize: 13, color: "#111827", fontWeight: "700", flex: 1, textAlign: "center" },
 });
 
 export default function EntriesTabScreen({ navigation }: Props) {

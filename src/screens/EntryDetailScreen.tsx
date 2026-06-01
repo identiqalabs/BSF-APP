@@ -94,7 +94,7 @@ export default function EntryDetailScreen({ route }: Props) {
 
         {!!entry.dignitaryName && (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Dignitary Name & Position</Text>
+            <Text style={styles.sectionTitle}>Dignitary Name & Designation / गणमान्य व्यक्ति का नाम एवं पदनाम</Text>
             <Text style={{ fontSize: 16, color: "#374151", fontWeight: "700" }}>{entry.dignitaryName}</Text>
           </View>
         )}
@@ -113,21 +113,17 @@ export default function EntryDetailScreen({ route }: Props) {
           </View>
         ) : null}
 
-        {(entry.isImported || !!entry.nameUri) && (
+        {entry.isImported && (
         <View style={styles.sectionNoPadding}>
           <Text style={[styles.sectionTitle, { paddingHorizontal: 16, paddingTop: 16 }]}>
-            {entry.isImported ? "Visitor Name & Address" : "Name"}
+            Visitor Name & Address
           </Text>
-          {entry.isImported ? (
-            <Text style={[styles.importedText, { paddingHorizontal: 16, paddingBottom: 16 }]}>{entry.personToMeet}</Text>
-          ) : (
-            <AutoHeightImage source={{ uri: entry.nameUri }} />
-          )}
+          <Text style={[styles.importedText, { paddingHorizontal: 16, paddingBottom: 16 }]}>{entry.personToMeet}</Text>
         </View>
         )}
 
         <View style={styles.sectionNoPadding}>
-          <Text style={[styles.sectionTitle, { paddingHorizontal: 16, paddingTop: 16 }]}>{entry.isImported ? "Remarks" : "Remarks"}</Text>
+          <Text style={[styles.sectionTitle, { paddingHorizontal: 16, paddingTop: 16 }]}>विचार / Thoughts</Text>
           {entry.isImported ? (
             <Text style={[styles.importedText, { paddingHorizontal: 16, paddingBottom: 16 }]}>{entry.remarksUri}</Text>
           ) : (

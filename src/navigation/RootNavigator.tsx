@@ -1,21 +1,20 @@
 import React from "react";
 import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
-import { Text, View, StyleSheet } from "react-native";
 
 import EntriesTabScreen from "../screens/EntriesTabScreen";
 import NewEntryModalScreen from "../screens/NewEntryModalScreen";
 import LegacyEntryScreen from "../screens/LegacyEntryScreen";
 import EntryDetailScreen from "../screens/EntryDetailScreen";
-import ImportPreviewScreen from "../screens/ImportPreviewScreen";
-import type { ExtractedEntry } from "../utils/extractEntries";
+import SettingsScreen from "../screens/SettingsScreen";
+import InactivityWrapper from "../components/InactivityWrapper";
 
 export type RootStackParamList = {
   Dashboard: undefined;
   LegacyEntry: undefined;
   NewEntryModal: undefined;
   EntryDetail: { entryId: string };
-  ImportPreview: { extractedEntries: ExtractedEntry[], debugInfo: string };
+  Settings: undefined;
 };
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -23,11 +22,13 @@ export default function RootNavigator() {
   return (
     <NavigationContainer>
       <Stack.Navigator>
-        <Stack.Screen
-          name="Dashboard"
-          component={EntriesTabScreen}
-          options={{ headerShown: false }}
-        />
+        <Stack.Screen name="Dashboard" options={{ headerShown: false }}>
+          {(props) => (
+            <InactivityWrapper>
+              <EntriesTabScreen {...props} />
+            </InactivityWrapper>
+          )}
+        </Stack.Screen>
         <Stack.Screen
           name="LegacyEntry"
           component={LegacyEntryScreen}
@@ -48,16 +49,12 @@ export default function RootNavigator() {
           options={{ headerShown: true, title: "Entry Detail" }}
         />
         <Stack.Screen
-          name="ImportPreview"
-          component={ImportPreviewScreen}
+          name="Settings"
+          component={SettingsScreen}
           options={{ headerShown: false }}
         />
       </Stack.Navigator>
     </NavigationContainer>
   );
 }
-
-const styles = StyleSheet.create({
-  // (intentionally left minimal)
-});
 

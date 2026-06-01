@@ -1,6 +1,7 @@
 import React, { useRef, forwardRef, useImperativeHandle, useEffect } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { WebView } from 'react-native-webview';
+import * as FileSystem from "expo-file-system/legacy";
 
 export interface RemarksCanvasProps {
   onDrawingStateChange?: (isDrawing: boolean) => void;
@@ -89,16 +90,21 @@ const CANVAS_HTML = `
   let currentMode = 'pen';
 
   // Set canvas actual pixel dimensions with DPR scaling for crisp lines
-  const dpr = window.devicePixelRatio || 1;
-  canvas.width = (window.innerWidth - 30) * dpr;
-  canvas.height = 2000 * dpr;
-  ctx.scale(dpr, dpr);
+  window.dpr = window.devicePixelRatio || 1;
+  window.canvas = document.getElementById('canvas');
+  window.ctx = window.canvas.getContext('2d');
 
-  // Drawing settings
-  ctx.strokeStyle = '#000000';
-  ctx.lineWidth = 3;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
+  window.setCanvasScale = () => {
+    window.ctx.setTransform(window.dpr, 0, 0, window.dpr, 0, 0);
+    window.ctx.strokeStyle = '#000000';
+    window.ctx.lineWidth = 3;
+    window.ctx.lineCap = 'round';
+    window.ctx.lineJoin = 'round';
+  };
+
+  window.canvas.width = (window.innerWidth - 30) * window.dpr;
+  window.canvas.height = 2000 * window.dpr;
+  window.setCanvasScale();
 
   let isDrawing = false;
   let lastX = 0;
@@ -231,36 +237,43 @@ const CANVAS_HTML = `
       }
     }
 
-    if (!hasPixels) return orig.toDataURL('image/png');
-
+    if (!hasPixels) return orig.toDataURL('image/jpeg', 0.95);
+    
     const tmp = document.createElement('canvas');
-    const width = maxX - minX + 1;
-    const height = maxY - minY + 1;
-    tmp.width = width;
-    tmp.height = height;
+    // We trim both top and bottom to remove empty vertical space.
+    // We keep the full width to maintain horizontal alignment.
+    const exportWidth = w;
+    const exportHeight = maxY - minY + 1;
+    
+    tmp.width = exportWidth;
+    tmp.height = exportHeight;
     const tCtx = tmp.getContext('2d');
-    tCtx.drawImage(orig, minX, minY, width, height, 0, 0, width, height);
-
-    return tmp.toDataURL('image/png');
+    tCtx.fillStyle = '#ffffff';
+    tCtx.fillRect(0, 0, exportWidth, exportHeight);
+    
+    // Draw only the inhabited vertical range
+    tCtx.drawImage(orig, 0, minY, w, exportHeight, 0, 0, w, exportHeight);
+    
+    return tmp.toDataURL('image/jpeg', 0.95);
   }
 
   window.getCanvasImage = () => {
-    return trimCanvas(canvas);
+    return trimCanvas(window.canvas);
   };
 
   window.clearCanvas = () => {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    window.ctx.clearRect(0, 0, window.canvas.width, window.canvas.height);
   };
 
   window.setDrawingMode = (mode) => {
     currentMode = mode;
     if (mode === 'eraser') {
-      ctx.globalCompositeOperation = 'destination-out';
-      ctx.lineWidth = 30;
+      window.ctx.globalCompositeOperation = 'destination-out';
+      window.ctx.lineWidth = 30;
       window.isEraserMode = true;
     } else {
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.lineWidth = 3;
+      window.ctx.globalCompositeOperation = 'source-over';
+      window.ctx.lineWidth = 3;
       window.isEraserMode = false;
       eraserCursor.style.display = 'none';
     }
@@ -270,21 +283,34 @@ const CANVAS_HTML = `
   window.loadImage = (base64) => {
     const img = new Image();
     img.onload = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(img, 0, 0, img.width / dpr, img.height / dpr);
+      const logicalCanvasWidth = window.canvas.width / window.dpr;
+      const logicalImgWidth = img.width / window.dpr;
+      const logicalImgHeight = img.height / window.dpr;
+
+      // Drawings are resized by the storage system.
+      // To restore original size and position, we stretch the optimized image 
+      // back to the full logical width of the canvas.
+      const drawWidth = logicalCanvasWidth;
+      const drawHeight = logicalImgHeight * (logicalCanvasWidth / logicalImgWidth);
+      const drawX = 0;
+      const drawY = 0;
+
+      window.ctx.clearRect(0, 0, window.canvas.width, window.canvas.height);
+      window.setCanvasScale();
+      window.ctx.imageSmoothingEnabled = true;
+      window.ctx.imageSmoothingQuality = 'high';
+      window.ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
+      scrollArea.scrollTop = 0;
+      updateScrollbar();
     };
-    img.src = 'data:image/png;base64,' + base64;
+    img.src = (base64.startsWith('file://') || base64.startsWith('data:')) ? base64 : ('data:image/png;base64,' + base64);
   };
 
   updateScrollbar();
   window.addEventListener('resize', () => {
-    const rectView = canvas.getBoundingClientRect();
-    canvas.width = rectView.width * dpr;
-    ctx.scale(dpr, dpr);
-    ctx.strokeStyle = '#000000';
-    ctx.lineWidth = 3;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
+    const rectView = window.canvas.getBoundingClientRect();
+    window.canvas.width = rectView.width * window.dpr;
+    window.setCanvasScale();
     updateScrollbar();
   });
 </script>
@@ -295,6 +321,70 @@ const CANVAS_HTML = `
 const RemarksCanvas = forwardRef<any, RemarksCanvasProps>((props, ref) => {
   const webViewRef = useRef<WebView>(null);
   let imageResolve = useRef<((data: string) => void) | null>(null);
+  const isWebViewReadyRef = useRef(false);
+  const pendingImageRef = useRef<string | null>(null);
+
+  const toRenderableCanvasSrc = async (imageUriOrBase64: string): Promise<string> => {
+    if (!imageUriOrBase64) return "";
+    if (imageUriOrBase64.startsWith("data:image")) return imageUriOrBase64;
+    if (imageUriOrBase64.startsWith("file://")) {
+      try {
+        const b64 = await FileSystem.readAsStringAsync(imageUriOrBase64, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        const lower = imageUriOrBase64.toLowerCase();
+        const mime = lower.endsWith(".png")
+          ? "image/png"
+          : lower.endsWith(".webp")
+          ? "image/webp"
+          : "image/jpeg";
+        return `data:${mime};base64,${b64}`;
+      } catch {
+        return imageUriOrBase64;
+      }
+    }
+    return imageUriOrBase64;
+  };
+
+  const injectLoadImage = async (imageUriOrBase64: string) => {
+    if (!imageUriOrBase64) return;
+    const resolvedSrc = await toRenderableCanvasSrc(imageUriOrBase64);
+    const encoded = JSON.stringify(resolvedSrc);
+    const js = `
+      (function(){
+        const src = ${encoded};
+        const img = new Image();
+        img.onload = function(){
+          const logicalCanvasWidth = window.canvas.width / window.dpr;
+          const logicalImgWidth = img.width / window.dpr;
+          const logicalImgHeight = img.height / window.dpr;
+          
+          // Drawings are resized by the storage system.
+          // To restore original size and position, we stretch the optimized image 
+          // back to the full logical width of the canvas.
+          const drawWidth = logicalCanvasWidth;
+          const drawHeight = logicalImgHeight * (logicalCanvasWidth / logicalImgWidth);
+          const drawX = 0;
+          const drawY = 0;
+          
+          window.ctx.clearRect(0,0,window.canvas.width,window.canvas.height);
+          window.setCanvasScale();
+          window.ctx.imageSmoothingEnabled = true;
+          window.ctx.imageSmoothingQuality = 'high';
+          window.ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
+          scrollArea.scrollTop = 0;
+          updateScrollbar();
+        };
+        img.src = (src.startsWith('file://') || src.startsWith('data:')) ? src : ('data:image/png;base64,' + src);
+      })();
+      true;
+    `;
+    if (!isWebViewReadyRef.current || !webViewRef.current) {
+      pendingImageRef.current = imageUriOrBase64;
+      return;
+    }
+    webViewRef.current.injectJavaScript(js);
+  };
 
   // Expose methods to parent via ref
   useImperativeHandle(ref, () => ({
@@ -314,19 +404,7 @@ const RemarksCanvas = forwardRef<any, RemarksCanvasProps>((props, ref) => {
       webViewRef.current?.injectJavaScript(`window.clearCanvas(); true;`);
     },
     loadImage: (base64: string) => {
-      // Load a base64 PNG onto the canvas, clearing previous content first
-      const js = `
-        (function(){
-          const img = new Image();
-          img.onload = function(){
-            const dpr = window.devicePixelRatio || 1;
-            ctx.clearRect(0,0,canvas.width,canvas.height);
-            ctx.drawImage(img, 0, 0, img.width / dpr, img.height / dpr);
-          };
-          img.src = 'data:image/png;base64,' + '${base64}';
-        })();
-        true;`;
-      webViewRef.current?.injectJavaScript(js);
+      void injectLoadImage(base64);
     }
   }));
 
@@ -335,20 +413,20 @@ const RemarksCanvas = forwardRef<any, RemarksCanvasProps>((props, ref) => {
     if (props.mode) {
       webViewRef.current?.injectJavaScript(`window.setDrawingMode('${props.mode}'); true;`);
     }
-    // Load initial image if provided
-    if (props.initialImageBase64) {
-      // Slight delay to ensure webview is ready
-      setTimeout(() => {
-        // Call the loadImage method defined above via ref
-        (ref as any).current?.loadImage(props.initialImageBase64);
-      }, 500);
-    }
-  }, [props.mode, props.initialImageBase64]);
+  }, [props.mode]);
+
+  useEffect(() => {
+    if (!props.initialImageBase64) return;
+    const t = setTimeout(() => {
+      void injectLoadImage(props.initialImageBase64!);
+    }, 250);
+    return () => clearTimeout(t);
+  }, [props.initialImageBase64]);
 
   const handleMessage = (event: any) => {
     const message = JSON.parse(event.nativeEvent.data);
     if (message.type === 'imageData' && imageResolve.current) {
-      const base64 = message.data.replace(/^data:image\/(png|jpeg);base64,/, "");
+      const base64 = message.data.replace(/^data:image\/(png|jpeg|jpg);base64,/, "");
       imageResolve.current(base64);
       imageResolve.current = null;
     } else if (message.type === 'drawingStart') {
@@ -365,6 +443,16 @@ const RemarksCanvas = forwardRef<any, RemarksCanvasProps>((props, ref) => {
         source={{ html: CANVAS_HTML }}
         scrollEnabled={false}
         showsVerticalScrollIndicator={false}
+        onLoadEnd={() => {
+          isWebViewReadyRef.current = true;
+          if (pendingImageRef.current) {
+            const pending = pendingImageRef.current;
+            pendingImageRef.current = null;
+            void injectLoadImage(pending);
+          } else if (props.initialImageBase64) {
+            void injectLoadImage(props.initialImageBase64);
+          }
+        }}
         onMessage={handleMessage}
         style={styles.webview}
         javaScriptEnabled={true}
